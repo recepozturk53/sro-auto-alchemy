@@ -61,25 +61,34 @@ durdurmadan sürekli basar (hedef eşiğe asla ulaşamaz).
 **Savunma:** Yeni stat desenini eklerken `parse_stat_result` **ve**
 `_extract_stat_value` birlikte güncelle.
 
-## 7. `_bring_window_to_front` parametresini kullanmıyor
+## 7. `_bring_window_to_front` parametresini kullanmıyor  (ÇÖZÜLDÜ — ADR-0006)
 
-Metot `window_title: str = "SRO_Client"` alır ama eşleştirme sabit:
+Eskiden metot `window_title: str = "SRO_Client"` alır ama eşleştirme sabitti:
 `'sro_client' in title.lower() or 'silkroad' in title.lower()`. Başka bir pencere
-başlığı geçirsen bile o pencere bulunmaz.
+başlığı geçirsen bile o pencere bulunmazdı.
 
-**Savunma:** Farklı pencere hedeflemek istiyorsan **ya** parametreyi gerçekten
-kullanacak şekilde düzelt **ya da oyuncu adı değiştiyse sabit eşleştirmeyi güncelle.
-Tanılamak için `python list_windows.py`.
+Artık `_window_title_candidates(window_title)` kullanılır: sırayla `window_title`
+→ `SRO_Client` → `Silkroad` denenir (pygetwindow ve ctypes yollarının ikisinde de).
+
+**Savunma:** Oyuncu pencere adı özelleştirilmişse `_bring_window_to_front("...")`
+çağrısına doğru başlığı ver. Tanılamak için `python list_windows.py`.
 
 ## 8. `mss` ve `pytesseract` import/çalışma zamanı bağımlılıkları
 
 - `screen_capture` import edilirken `mss.mss()` **oluşturulur** → etkin Windows masaüstü
   oturumu şarttır. CI/headless ortamda import patlayabilir.
-- `check_dependencies()` Tesseract yoksa **uyarı** verir ama uygulamayı açık bırakır;
-  OCR ancak kullanıldığında boş string döner.
+- `check_dependencies()` Tesseract yoksa **uyarı** verir ama uygulamayı açık bırakır.
+- `ocr.py` import edilirken `locate_tesseract()` çalışır: önce `PATH`, sonra
+  `C:\Program Files\Tesseract-OCR`, `C:\Program Files (x86)\Tesseract-OCR`,
+  `%LOCALAPPDATA%\Programs\Tesseract-OCR` ve `TESSERACT_CMD` denenir; sürüm
+  çalıştırılarak doğrulanır. Bulunamazsa `extract_text` boş string döner ve
+  `ocr_processor.is_tesseract_available` `False` olur (GUI'de "Test OCR" bunu loglar).
+- Yeni bağımlılıklar (`pywin32`, `pygetwindow`) da import anında denenir; eksikse
+  `bot_base` sessizce `ctypes` yedek yoluna düşer.
 
 **Savunma:** `mss`/`pytesseract` gerektiren testleri hedef makinede çalıştır.
-Tesseract yoksa `pip`-level bağımlılıklar geçer, runtime'da değil.
+Tesseract'ı PATH'e eklemek zorunda değilsin — yaygın kurulum dizinleri ve
+`TESSERACT_CMD` otomatik denenir.
 
 ## 9. `Test OCR` çalışma dizinine PNG yazıyor
 

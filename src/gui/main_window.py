@@ -423,6 +423,13 @@ class MainWindow:
             self._log_message("ERROR: Please select Log Area first!")
             return
         
+        if ocr_processor.is_tesseract_available:
+            self._log_message(f"Tesseract ready: {ocr_processor.tesseract_info()}")
+        else:
+            self._log_message(
+                f"ERROR: Tesseract engine not found ({ocr_processor.tesseract_info()})"
+            )
+
         self._log_message("Testing OCR... Make sure game window is visible!")
         
         try:

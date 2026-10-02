@@ -12,8 +12,9 @@ Bu modül **tek OCR kapısıdır**: botlar doğrudan Tesseract çağırmaz, her 
 
 | Adım | Metot | Ne yapar |
 |---|---|---|
-| 1 | `preprocess_image` | `cvtColor(BGR2GRAY)` → `GaussianBlur(3,3)` → `threshold(THRESH_BINARY + THRESH_OTSU)` → `morphologyEx(MORPH_CLOSE, 2x2)` |
-| 2 | `extract_text` | `pytesseract.image_to_string(..., --psm N --oem 3 -c tessedit_char_whitelist=...)` |
+| 0 | `locate_tesseract` (import anında) | `PATH` → yaygın kurulum dizinleri → `TESSERACT_CMD`; `get_tesseract_version()` ile doğrular |
+| 1 | `preprocess_image` | `cvtColor(BGR2GRAY)` → `resize(2x)` (h<200) → `GaussianBlur(3,3)` → `threshold(THRESH_BINARY + THRESH_OTSU)` → **invert** (mean<127) → `morphologyEx(MORPH_CLOSE, 2x2)` |
+| 2 | `extract_text` | Tesseract yoksa boş string döner; varsa `pytesseract.image_to_string(..., --psm N --oem 3 -c tessedit_char_whitelist=...)` |
 | 3 | `parse_*_result` | Saf metin → `ParseResult` (regex) |
 
 ## `ParseResult` sözleşmesi
@@ -79,6 +80,7 @@ nedenidir:
 | Yeni log formatı | Sınıf seviyesine `re.compile` desen ekle, `parse_*` içinde uygun **sıraya** yerleştir |
 | OCR ön işleme ince ayarı | `preprocess_image` |
 | Tesseract parametreleri | `extract_text` içindeki `config` satırı (whitelist dahil) |
+| Tesseract konumu / doğrulama | `locate_tesseract`, `_tesseract_path_candidates` |
 | Yeni mod | `process_log_region`'a `elif mode == ...` ve eşleşen `parse_*` |
 | Hata ayıklama görseli | `debug_save_preprocessed` |
 
@@ -91,6 +93,14 @@ nedenidir:
   `ParseResult(success=False, error="No text extracted")` üretir.
 - Whitelist dar tutulmalıdır; genişletmek hem yavaşlatır hem yanlış karaktere yol açar.
 - `mode` `"plus"`/`"stat"` dışındaysa `success=False` + `error` döner.
+- `preprocess_image` çıktısı **koyu yazı / açık zemin** olmalıdır: oyun log'u
+  açık-yazı/koyu-zemin olduğu için görüntü ortalama < 127 ise otomatik ters
+  çevrilir. Bu adım kaldırılırsa Tesseract doğruluğu ciddi biçimde düşer.
+- `threshold` parametresi yalnızca **yedektir**; `THRESH_OTSU` aktifken OpenCV onu
+  yok sayar.
+- Tesseract konumu import anında çözülür (`locate_tesseract`); kullanıcı motoru
+  sonradan kurarsa `extract_text` ilk çağrıda bir kez daha arar — uygulamayı
+  yeniden başlatmak gerekmez.
 
 ## Test noktası
 

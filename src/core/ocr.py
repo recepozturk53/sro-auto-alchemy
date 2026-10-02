@@ -3,7 +3,9 @@ OCR module for parsing game log text using OpenCV + Tesseract.
 Implements thresholding preprocessing and strict regex parsing.
 """
 
+import os
 import re
+import shutil
 import cv2
 import numpy as np
 import pytesseract
@@ -11,6 +13,66 @@ from typing import Optional, Tuple, List, Dict, Any
 from dataclasses import dataclass
 from PIL import Image
 import threading
+
+
+def _tesseract_path_candidates() -> Tuple[str, ...]:
+    """
+    Well-known Windows locations of tesseract.exe, plus the TESSERACT_CMD override.
+
+    Returns:
+        Ordered tuple of candidate paths (may contain empty strings)
+    """
+    local_appdata = os.environ.get("LOCALAPPDATA", "")
+    return (
+        os.environ.get("TESSERACT_CMD", ""),
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+        os.path.join(local_appdata, "Programs", "Tesseract-OCR", "tesseract.exe"),
+        os.path.join(local_appdata, "Tesseract-OCR", "tesseract.exe"),
+    )
+
+
+def locate_tesseract() -> Tuple[bool, str]:
+    """
+    Point pytesseract at a working tesseract.exe and verify that it runs.
+
+    Tries the PATH lookup first (pytesseract default), then the common install
+    directories and the TESSERACT_CMD environment variable. Verifying with
+    get_tesseract_version() means a broken or missing binary is reported as
+    unavailable instead of failing silently on every OCR call.
+
+    Returns:
+        Tuple of (available, detail) where detail is the detected version string
+        or the last error message
+    """
+    last_error = ""
+
+    # 1. Default: pytesseract resolves "tesseract" from PATH.
+    try:
+        return True, str(pytesseract.get_tesseract_version())
+    except Exception as exc:
+        last_error = str(exc)
+
+    # 2. Known / explicit install locations.
+    for candidate in _tesseract_path_candidates():
+        if not candidate or not os.path.isfile(candidate):
+            continue
+        pytesseract.pytesseract.tesseract_cmd = candidate
+        try:
+            return True, str(pytesseract.get_tesseract_version())
+        except Exception as exc:
+            last_error = str(exc)
+
+    # 3. Last resort: whatever shutil.which() can find.
+    found = shutil.which("tesseract")
+    if found:
+        pytesseract.pytesseract.tesseract_cmd = found
+        try:
+            return True, str(pytesseract.get_tesseract_version())
+        except Exception as exc:
+            last_error = str(exc)
+
+    return False, last_error
 
 
 @dataclass
@@ -59,7 +121,18 @@ class OCRProcessor:
     def __init__(self):
         if not hasattr(self, '_initialized'):
             self._ocr_lock = threading.RLock()
+            # Locate and verify the Tesseract engine once at startup.
+            self._tesseract_available, self._tesseract_detail = locate_tesseract()
             self._initialized = True
+
+    @property
+    def is_tesseract_available(self) -> bool:
+        """Whether a working Tesseract engine was detected."""
+        return self._tesseract_available
+
+    def tesseract_info(self) -> str:
+        """Human-readable Tesseract status (version string or error message)."""
+        return self._tesseract_detail
     
     def preprocess_image(self, image: np.ndarray, threshold: int = 150) -> np.ndarray:
         """
@@ -67,7 +140,7 @@ class OCRProcessor:
         
         Args:
             image: BGR numpy array
-            threshold: Threshold value for binarization
+            threshold: Fallback threshold value (ignored while Otsu is active)
             
         Returns:
             Preprocessed grayscale image
@@ -75,12 +148,19 @@ class OCRProcessor:
         with self._ocr_lock:
             # Convert to grayscale
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+            # Upscale small crops: Tesseract recognises glyphs much better when
+            # they are not tiny.
+            if gray.shape[0] < 200:
+                gray = cv2.resize(
+                    gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC
+                )
             
             # Apply Gaussian blur to reduce noise
             blurred = cv2.GaussianBlur(gray, (3, 3), 0)
             
-            # Apply adaptive thresholding for better text visibility
-            # Use Otsu's method for automatic threshold determination
+            # Binarize with Otsu's method. The fixed threshold value is only a
+            # fallback: OpenCV ignores it while THRESH_OTSU is active.
             _, thresh = cv2.threshold(
                 blurred, 
                 threshold, 
@@ -88,6 +168,11 @@ class OCRProcessor:
                 cv2.THRESH_BINARY + cv2.THRESH_OTSU
             )
             
+            # Game logs are light text on a dark background, but Tesseract
+            # expects dark text on a light background - invert when needed.
+            if float(np.mean(thresh)) < 127.0:
+                thresh = cv2.bitwise_not(thresh)
+
             # Apply morphological operations to clean up text
             kernel = np.ones((2, 2), np.uint8)
             cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
@@ -107,6 +192,17 @@ class OCRProcessor:
             Extracted text string
         """
         with self._ocr_lock:
+            # Retry locating Tesseract; the engine may have been installed while
+            # the application was already running.
+            if not self._tesseract_available:
+                self._tesseract_available, self._tesseract_detail = locate_tesseract()
+            if not self._tesseract_available:
+                print(
+                    "OCR Error: Tesseract engine not found "
+                    f"({self._tesseract_detail}). Install Tesseract or set TESSERACT_CMD."
+                )
+                return ""
+
             try:
                 # Preprocess the image
                 processed = self.preprocess_image(image, threshold)

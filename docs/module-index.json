@@ -99,6 +99,7 @@
         "BotBase._check_pause_stop",
         "BotBase._click_at",
         "BotBase._bring_window_to_front",
+        "BotBase._window_title_candidates",
         "BotBase._play_alarm"
       ],
       "depends_on": [],
@@ -106,7 +107,8 @@
         "Subclasses must implement _run_loop and _perform_iteration.",
         "Every loop iteration must call _check_pause_stop() first and bail out when it returns True.",
         "Status changes must go through _update_status so callbacks fire.",
-        "This module owns all Win32 primitives; there is no input_controller module."
+        "This module owns all Win32 primitives; there is no input_controller module.",
+        "Win32 helpers prefer pywin32/pygetwindow and fall back to ctypes; keep both paths valid (ADR-0006)."
       ]
     },
     "core-bot-plus": {
@@ -427,7 +429,9 @@
         "python list_windows.py"
       ],
       "rules": [
-        "Wrap Win32 calls in try/except and log the failure."
+        "Wrap Win32 calls in try/except and log the failure.",
+        "Prefer pywin32/pygetwindow; keep the ctypes fallback valid too (ADR-0006).",
+        "New input dependencies must be added to requirements.txt and sro_alchemy_bot.spec hiddenimports."
       ],
       "keywords": [
         "window",
@@ -440,6 +444,10 @@
         "beep",
         "sound",
         "alarm",
+        "pywin32",
+        "win32api",
+        "win32con",
+        "pygetwindow",
         "pencere",
         "tiklama"
       ]

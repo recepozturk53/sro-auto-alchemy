@@ -6,10 +6,30 @@ import threading
 import time
 import ctypes
 from abc import ABC, abstractmethod
-from typing import Optional, Callable
+from typing import List, Optional, Callable
 from dataclasses import dataclass
 from enum import Enum
 import winsound
+
+# Preferred input backend: pywin32 (win32api/win32con) drives the mouse more
+# reliably than raw ctypes on SRO_Client, and pygetwindow restores/foregrounds
+# the game window. Both are optional: if they are missing we fall back to the
+# raw ctypes implementation so the bot still starts.
+try:
+    import win32api
+    import win32con
+    _HAS_WIN32API = True
+except ImportError:  # pragma: no cover - depends on host environment
+    win32api = None
+    win32con = None
+    _HAS_WIN32API = False
+
+try:
+    import pygetwindow as gw
+    _HAS_PYGETWINDOW = True
+except ImportError:  # pragma: no cover - depends on host environment
+    gw = None
+    _HAS_PYGETWINDOW = False
 
 
 class BotState(Enum):
@@ -96,34 +116,65 @@ class BotBase(ABC):
     def _click_at(self, x: int, y: int, delay_ms: int = 50) -> None:
         """
         Perform a mouse click at specified coordinates.
-        Uses Windows API for reliable clicking.
-        
+
+        Uses pywin32 (win32api/win32con) when available - the approach proven
+        to work on SRO_Client - and falls back to the raw ctypes mouse_event
+        calls otherwise.
+
         Args:
             x: X coordinate
             y: Y coordinate
             delay_ms: Delay between down and up events
         """
         try:
-            user32 = ctypes.windll.user32
-            
-            # Move cursor to position
-            user32.SetCursorPos(x, y)
-            time.sleep(0.1)  # Wait for cursor to move
-            
-            # Mouse down and up with proper flags
-            MOUSEDOWN = 0x0002  # MOUSEEVENTF_LEFTDOWN
-            MOUSEUP = 0x0004    # MOUSEEVENTF_LEFTUP
-            
-            # Perform click
-            user32.mouse_event(MOUSEDOWN, 0, 0, 0, 0)
-            time.sleep(delay_ms / 1000.0)
-            user32.mouse_event(MOUSEUP, 0, 0, 0, 0)
-            
+            if _HAS_WIN32API:
+                # Move cursor to position, then press and release the button.
+                win32api.SetCursorPos((x, y))
+                time.sleep(0.05)  # Wait for the cursor to move
+                win32api.mouse_event(
+                    win32con.MOUSEEVENTF_LEFTDOWN, x, y, 0, 0
+                )
+                time.sleep(delay_ms / 1000.0)
+                win32api.mouse_event(
+                    win32con.MOUSEEVENTF_LEFTUP, x, y, 0, 0
+                )
+            else:
+                user32 = ctypes.windll.user32
+                user32.SetCursorPos(x, y)
+                time.sleep(0.05)  # Wait for the cursor to move
+
+                MOUSEDOWN = 0x0002  # MOUSEEVENTF_LEFTDOWN
+                MOUSEUP = 0x0004    # MOUSEEVENTF_LEFTUP
+
+                user32.mouse_event(MOUSEDOWN, 0, 0, 0, 0)
+                time.sleep(delay_ms / 1000.0)
+                user32.mouse_event(MOUSEUP, 0, 0, 0, 0)
+
             self._log(f"Clicked at ({x}, {y})")
-            
+
         except Exception as e:
             self._log(f"Click error: {e}")
     
+    @staticmethod
+    def _window_title_candidates(window_title: str) -> List[str]:
+        """
+        Build the ordered list of title fragments used to locate the game window.
+
+        The caller's title comes first so the parameter actually matters; the
+        well-known SRO variants are appended as fallbacks.
+
+        Args:
+            window_title: Primary (partial) window title to search for
+
+        Returns:
+            De-duplicated list of title fragments
+        """
+        candidates: List[str] = []
+        for name in (window_title, "SRO_Client", "Silkroad"):
+            if name and name not in candidates:
+                candidates.append(name)
+        return candidates
+
     def _bring_window_to_front(self, window_title: str = "SRO_Client") -> bool:
         """
         Bring a window to the foreground by partial title match.
@@ -135,12 +186,33 @@ class BotBase(ABC):
             True if window was found and activated, False otherwise
         """
         try:
+            # Preferred path: pygetwindow restores and foregrounds the window.
+            if _HAS_PYGETWINDOW:
+                for name in self._window_title_candidates(window_title):
+                    try:
+                        windows = gw.getWindowsWithTitle(name)
+                    except Exception:
+                        windows = []
+                    for window in windows:
+                        try:
+                            if window.isMinimized:
+                                window.restore()
+                            window.activate()
+                            time.sleep(0.4)  # Wait for the window to come to front
+                            self._log(f"Activated window: {window.title}")
+                            return True
+                        except Exception as e:
+                            self._log(
+                                f"pygetwindow activate failed ({window.title}): {e}"
+                            )
+
             import ctypes
             from ctypes import wintypes
             
             user32 = ctypes.windll.user32
             
             # Find window by partial title
+            candidates = self._window_title_candidates(window_title)
             hwnd = None
             found_title = ""
             
@@ -151,8 +223,8 @@ class BotBase(ABC):
                     buffer = ctypes.create_unicode_buffer(length + 1)
                     user32.GetWindowTextW(handle, buffer, length + 1)
                     title = buffer.value
-                    # Check for SRO_Client or variations
-                    if 'sro_client' in title.lower() or 'silkroad' in title.lower():
+                    # Check every candidate fragment against the window title
+                    if any(name.lower() in title.lower() for name in candidates):
                         hwnd = handle
                         found_title = title
                         return False

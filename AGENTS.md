@@ -69,11 +69,11 @@ python tools/ctx.py <konu>                    # "bu iş için hangi dosyalar?" (
 | `main.py` | L0 | logging kurulumu, bağımlılık kontrolü, uygulama başlatma | [modules/entrypoint.md](docs/modules/entrypoint.md) |
 | `src/gui/main_window.py` | L1 | Ana pencere, mod seçimi, girdi alanları, butonlar, log kutusu | [modules/gui-main-window.md](docs/modules/gui-main-window.md) |
 | `src/gui/coordinate_picker.py` | L1 | Tam ekran overlay ile nokta (fuse) / dikdörtgen (log ROI) seçimi | [modules/gui-coordinate-picker.md](docs/modules/gui-coordinate-picker.md) |
-| `src/core/bot_base.py` | L2 | `BotBase` ABC, thread yönetimi, durum makinesi, Win32 tıklama/pencere/alarm | [modules/core-bot-base.md](docs/modules/core-bot-base.md) |
+| `src/core/bot_base.py` | L2 | `BotBase` ABC, thread yönetimi, durum makinesi, tıklama (pywin32→ctypes) ve pencere (pygetwindow→ctypes) | [modules/core-bot-base.md](docs/modules/core-bot-base.md) |
 | `src/core/bot_plus.py` | L2 | Plus modu ana döngüsü ve hedef kararı | [modules/core-bot-plus.md](docs/modules/core-bot-plus.md) |
 | `src/core/bot_stat.py` | L2 | Stat modu ana döngüsü, `new_avg`/`new_value` çözümleme | [modules/core-bot-stat.md](docs/modules/core-bot-stat.md) |
 | `src/core/screen_capture.py` | L3 | `mss` ile bölge yakalama, BGR ndarray üretimi | [modules/core-screen-capture.md](docs/modules/core-screen-capture.md) |
-| `src/core/ocr.py` | L3 | ön işleme → Tesseract → regex ayrıştırma (`ParseResult`) | [modules/core-ocr.md](docs/modules/core-ocr.md) |
+| `src/core/ocr.py` | L3 | Tesseract konum tespiti → ön işleme (Otsu + otomatik ters çevirme) → Tesseract → regex ayrıştırma (`ParseResult`) | [modules/core-ocr.md](docs/modules/core-ocr.md) |
 | `src/core/config.py` | L4 | `BotConfig` alanları, JSON kalıcılık, thread-safe erişim | [modules/core-config.md](docs/modules/core-config.md) |
 
 > `sro_alchemy_bot_entegration_plan.md` **tarihsel plan dokümanıdır; kodla uyuşmaz.**
@@ -90,6 +90,7 @@ Bu tablo **kaynak gerçeğidir**. Emin değilsen `python tools/ctx.py <konu>` ç
 | Görev | Düzenlenecek dosya | Önce oku |
 |---|---|---|
 | OCR ön işleme / Tesseract ayarı | `src/core/ocr.py` | `docs/modules/core-ocr.md` |
+| Tesseract bulunamıyor / OCR motoru | `src/core/ocr.py` (`locate_tesseract`) | `docs/modules/core-ocr.md` |
 | Yeni log formatı / regex | `src/core/ocr.py` | `docs/modules/core-ocr.md` (sıra kuralı) |
 | Stat değer çözümleme (`new_avg`/`new_value`) | `src/core/bot_stat.py` | `docs/modules/core-bot-stat.md` |
 | Plus modu döngüsü / hedef | `src/core/bot_plus.py` | `docs/modules/core-bot-plus.md` |
@@ -113,6 +114,7 @@ Bu tablo **kaynak gerçeğidir**. Emin değilsen `python tools/ctx.py <konu>` ç
 | `config_manager.update(fuse_bttn_x=...)` | Alan adı `BotConfig` ile birebir olmalı, yoksa **sessizce** yutulur |
 | Yeni stat deseni eklerken `_extract_stat_value`'yi unutmak | Sonuç `new_avg`/`new_value` anahtarlarına normalize edilmeli |
 | Yeni bağımlılık eklerken spec'i atlamak | `requirements.txt` **+** `sro_alchemy_bot.spec` hiddenimports |
+| Tıklamayı yalnızca `ctypes` ile bırakmak | pywin32/pygetwindow birincil; `ctypes` yedek yolunu da koru (ADR-0006) |
 | Bot thread'den doğrudan `widget.configure()` | `root.after(0, ...)` ile marshal et |
 | Yeni modül ekleyip haritayı güncellememek | `module-index.json` + `docs/modules/*.md` + `verify_docs.py` |
 
@@ -140,7 +142,7 @@ Tamamı ve kanıtları: `docs/gotchas.md`.
 4. `update()` her çağrıda diske yazar (döngüde çağırma).
 5. OCR parser sırası davranışsal sözleşmedir.
 6. Stat sonucu polimorfiktir; yeni desen `_extract_stat_value` ile eşleşmeli.
-7. `_bring_window_to_front` başlık parametresini kullanmıyor.
+7. ~~`_bring_window_to_front` başlık parametresini kullanmıyor.~~ (ADR-0006 ile çözüldü)
 8. `mss` import anında açılır; Tesseract eksikse uygulama yine açılır (uyarı).
 9. `Test OCR` çalışma dizinine `debug_log_region.png` yazar.
 10. `.gitignore` `tests/` ve `test_*.py`'yi dışlıyor.

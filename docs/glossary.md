@@ -38,6 +38,9 @@
 | **RLock** | Yeniden girişli kilit; iç içe `with` güvenli |
 | **Daemon thread** | Ana program çıkınca otomatik sonlanan arka iş parçacığı |
 | **Marshal (thread)** | UI güncellemesini `root.after(0, ...)` ile ana thread'e taşımak |
+| **pywin32** | `win32api`/`win32con`; tıklama + pencere kontrolü için birincil backend (ADR-0006) |
+| **pygetwindow** | Pencereyi `restore()`/`activate()` ile öne getiren yardımcı kütüphane |
+| **TESSERACT_CMD** | `tesseract.exe` yolunu elle belirten ortam değişkeni |
 
 ## Log formatları (gerçek örnekler)
 

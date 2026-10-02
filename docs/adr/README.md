@@ -10,6 +10,7 @@ ADR neden o şekilde yaptığını korur.
 | [0003-ocr-pipeline.md](0003-ocr-pipeline.md) | OCR + regex yerine ML modeli yok | Kabul |
 | [0004-pervasive-singletons.md](0004-pervasive-singletons.md) | Servisler singleton | Kabul (teknik borç) |
 | [0005-win32-primitives.md](0005-win32-primitives.md) | Tıklama/pencere/alarm `bot_base.py` içinde | Kabul (teknik borç) |
+| [0006-input-backend-pywin32-pygetwindow.md](0006-input-backend-pywin32-pygetwindow.md) | Tıklama pywin32, pencere pygetwindow (ctypes yedekli) | Kabul |
 
 ## Şablon
 

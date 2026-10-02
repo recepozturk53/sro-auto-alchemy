@@ -40,8 +40,10 @@ Bu ortak kasıtlıdır: yeni mod eklerken 1–7'yi kopyalamak yerine `BotBase` y
 ```
 BGR ndarray
   → cvtColor(BGR2GRAY)                 gri tonlama
+  → resize(2x) (yükseklik < 200 px)    küçük kırpımları büyüt
   → GaussianBlur(3,3)                 gürültü azaltma
-  → threshold(THRESH_BINARY + THRESH_OTSU)   otomatik eşik + kullanıcı değeri
+  → threshold(THRESH_BINARY + THRESH_OTSU)   Otsu ile otomatik eşik
+  → invert (mean < 127 ise)            açık-yazı/koyu-zemin → koyu-yazı/açık-zemin
   → morphologyEx(MORPH_CLOSE, 2x2)    karakterleri birleştir
   → pytesseract.image_to_string(--psm N --oem 3 -c tessedit_char_whitelist=...)
   → regex ayrıştırma                  ParseResult
@@ -50,6 +52,12 @@ BGR ndarray
 Tesseract whitelist'i `ocr.py` içinde sabittir ve rakam, `+ - . > % ~ [ ] ( )` ile
 harfleri içerir. Karakter kümesini genişletmek OCR hızını ve doğruluğunu etkiler —
 değiştiriyorsan `docs/modules/core-ocr.md` ve `docs/gotchas.md` güncelle.
+
+Tesseract motoru `ocr.py` import edilirken `locate_tesseract()` ile bulunur: önce
+`PATH`, sonra `C:\Program Files\Tesseract-OCR`, `C:\Program Files (x86)\Tesseract-OCR`,
+`%LOCALAPPDATA%\Programs\Tesseract-OCR` ve `TESSERACT_CMD` ortam değişkeni denenir;
+`get_tesseract_version()` ile çalıştığı doğrulanır. Bulunamazsa OCR boş string döner
+(`ocr_processor.is_tesseract_available` → `False`).
 
 ## Desen öncelik sırası (sözleşme)
 
@@ -117,10 +125,13 @@ sessizce düşürür. Alan adı = JSON anahtarıdır. Bkz. [modules/core-config.
 
 | Yardımcı | Ne yapar |
 |---|---|
-| `_click_at(x, y, delay_ms)` | `SetCursorPos` + `mouse_event(LEFTDOWN/LEFTUP)` |
-| `_bring_window_to_front(title)` | `EnumWindows` ile `sro_client`/`silkroad` arar, `ShowWindow(SW_RESTORE)` + `SetForegroundWindow` + Alt tuşu hilesi |
+| `_click_at(x, y, delay_ms)` | pywin32 varsa `win32api.SetCursorPos` + `mouse_event(LEFTDOWN/LEFTUP)`; yoksa `ctypes` ile aynısı |
+| `_window_title_candidates(title)` | `title` → `SRO_Client` → `Silkroad` sıralı, tekilleştirilmiş başlık parçaları |
+| `_bring_window_to_front(title)` | pygetwindow varsa `restore()` + `activate()`; yoksa `EnumWindows` + `ShowWindow(SW_RESTORE)` + `SetForegroundWindow` + Alt tuşu hilesi |
 | `_play_alarm(kind)` | `winsound.Beep` ile success/failure/warning tonları |
 
-Pencere eşleştirme `'sro_client' in title.lower() or 'silkroad' in title.lower()` ile
-kısmi başlık eşleşmesidir; oyun penceresi adı değişirse burası güncellenir.
+Girdi backend'i iki katmanlıdır (ADR-0006): birincil yol **pywin32 + pygetwindow**,
+yedek yol saf `ctypes`. İki kitaplık da isteğe bağlı bağımlılıktır; eksikse uygulama
+çökmez, yedek yola düşer. Başlık eşleşmesi artık `window_title` parametresini
+kullanır ve oyun penceresi adı değişirse `_window_title_candidates` güncellenir.
 Tanılamak için: `python list_windows.py`.

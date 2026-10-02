@@ -26,9 +26,13 @@ Tüm bot modlarının ortak tabanıdır. Şunları sağlar:
 
 | Metot | Davranış |
 |---|---|
-| `_click_at(x, y, delay_ms=50)` | `SetCursorPos` + 0.1 sn bekle + `mouse_event(LEFTDOWN)` + bekle + `mouse_event(LEFTUP)` |
-| `_bring_window_to_front(title="SRO_Client")` | `EnumWindows` ile başlıkta `sro_client`/`silkroad` arar; `ShowWindow(SW_RESTORE)` + `SetForegroundWindow` + `BringWindowToTop` + Alt-tuşu hilesi; 0.5 sn bekler |
+| `_click_at(x, y, delay_ms=50)` | **pywin32** varsa `win32api.SetCursorPos` + `mouse_event(MOUSEEVENTF_LEFTDOWN/LEFTUP)`; yoksa `ctypes` `SetCursorPos` + `mouse_event` |
+| `_window_title_candidates(title)` | Sıralı, tekilleştirilmiş başlık parçaları: `title` → `SRO_Client` → `Silkroad` |
+| `_bring_window_to_front(title="SRO_Client")` | **pygetwindow** varsa `getWindowsWithTitle` + `restore()`/`activate()` (≈0.4 sn); yoksa `EnumWindows` + `ShowWindow(SW_RESTORE)` + `SetForegroundWindow` + `BringWindowToTop` + Alt-tuşu hilesi (≈0.5 sn) |
 | `_play_alarm(kind)` | `success`: 523→659→784→1047 Hz yükselen; `failure`: 400→300→200 Hz düşen; `warning`: 1000 Hz |
+
+> Girdi backend'i isteğe bağlı iki katmanlıdır (birincil: pywin32 + pygetwindow,
+> yedek: saf `ctypes`) — bkz. [ADR-0006](../adr/0006-input-backend-pywin32-pygetwindow.md).
 
 ## Döngü şablonu (yeni mod eklerken kopyala)
 
@@ -80,6 +84,8 @@ def _run_loop(self) -> None:
   uzun beklemeler (animasyon) stop'u geciktirebilir — `_check_pause_stop` ancak
   iterasyon sonunda kontrol edilir.
 - `pause()` bir **toggle**'dır; her çağrı durumu ters çevirir.
-- `_bring_window_to_front` başlık parametresini kullanır ama eşleştirme sabit
-  `sro_client`/`silkroad` alt dize kontrolüdür; oyun penceresi adı değişirse
-  burası güncellenir. Tanılamak için: `python list_windows.py`.
+- `_bring_window_to_front` artık `window_title` parametresini gerçekten kullanır:
+  `_window_title_candidates` sırayla `title` → `SRO_Client` → `Silkroad` arar
+  (ADR-0006). Tanılamak için: `python list_windows.py`.
+- Girdi backend'i isteğe bağlıdır: `pywin32`/`pygetwindow` yoksa `ctypes` yedek
+  yolu devreye girer; uygulama çökmez ama tıklama güvenilirliği düşer.

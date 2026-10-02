@@ -36,7 +36,7 @@ python list_windows.py
 ```
 
 "SRO windows" bölümünde `SRO_Client` (veya varyantı) görünmeli. Görünmüyorsa
-`bot_base._bring_window_to_front` içindeki `sro_client` / `silkroad` eşleştirmesini güncelle.
+`bot_base._window_title_candidates` listesine pencerenin gerçek başlığını ekle.
 
 ## Katman 4 — Entegrasyon: OCR testi (oyun açıkken)
 
@@ -48,6 +48,7 @@ Uygulamayı başlat: `python main.py`
    - `OCR Raw Text:` → ham metin (hata ayıklamanın ilk durağı)
    - `Result Type:` → `plus` / `stat` / `failed` / `unknown`
    - `Parsed Value:` → ayrıştırılan değer
+   - `Tesseract ready: <sürüm>` → motor bulundu (yoksa `ERROR: Tesseract engine not found` → `TESSERACT_CMD` ayarla)
 
 `unknown` dönüyorsa:
 - Ham metne bak: beklediğiniz rakamlar var mı?

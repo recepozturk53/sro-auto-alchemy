@@ -66,12 +66,15 @@ def check_dependencies():
         print("\nInstall with: pip install -r requirements.txt")
         return False
     
-    # Check Tesseract installation
+    # Check Tesseract installation. ocr.py also probes the common install paths
+    # and honours the TESSERACT_CMD environment variable at runtime.
     try:
-        pytesseract.get_tesseract_version()
+        version = pytesseract.get_tesseract_version()
+        print(f"Tesseract OCR detected: {version}")
     except Exception as e:
-        print("WARNING: Tesseract OCR may not be installed or not in PATH.")
-        print("Please install Tesseract from: https://github.com/UB-Mannheim/tesseract/wiki")
+        print("WARNING: Tesseract OCR engine not found.")
+        print("Install it from: https://github.com/UB-Mannheim/tesseract/wiki")
+        print("or set the TESSERACT_CMD environment variable to tesseract.exe.")
         print(f"Error: {e}")
     
     return True
