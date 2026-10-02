@@ -1,0 +1,21 @@
+description: SRO Auto-Alchemy Bot — katmanlı mimari, katman kuralları, nereye ne yazılır
+globs: ["**/*.py", "**/*.spec", "**/*.txt"]
+alwaysApply: true
+
+# SRO Auto-Alchemy Bot
+
+Kuralların ve mimari haritasının tek kaynağı: **`@AGENTS.md`**
+
+Ek kaynaklar (gerektiğinde oku):
+- Modül sözleşmeleri: `docs/modules/*.md`
+- Mimari/thread/durum makinesi: `docs/architecture.md`
+- Kod kuralları: `docs/conventions.md`
+- Bilinen tuzaklar: `docs/gotchas.md`
+- Tarifler (yeni mod/regex/ayar): `docs/patterns.md`
+
+Zorunlu davranış:
+- Kod değiştirmeden önce hangi dosyada çalışılacağını belirle:
+  `python tools/ctx.py <konu>`
+- Katman bağımlılığını koru: `core` asla `gui` import etmez.
+- Değişiklik sonrası: `python -m compileall -q src main.py`
+- Harita güncelliğini koru: `python tools/verify_docs.py`

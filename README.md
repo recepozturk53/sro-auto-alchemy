@@ -2,6 +2,23 @@
 
 An automated bot for Silkroad Online alchemy system with CustomTkinter GUI.
 
+> **AI agent / katkıcı isen:** Depo kuralları ve mimari haritası **[AGENTS.md](AGENTS.md)** dosyasındadır.
+> Hangi dosyayı okuyup nereye yazacağını bilmiyorsan: `python tools/ctx.py <konu>`
+
+## Architecture at a glance
+
+```
+main.py (bootstrap)
+ └─ src/gui/        CustomTkinter UI + coordinate picker   [Tk main thread]
+     └─ src/core/bot_*.py   bot loop, state machine        [bot thread]
+         ├─ src/core/ocr.py            OpenCV + Tesseract + regex
+         ├─ src/core/screen_capture.py mss screen capture
+         └─ src/core/config.py         BotConfig + JSON persistence
+```
+
+Deeper docs: [architecture.md](docs/architecture.md) · [module map](docs/README.md) ·
+[decisions](docs/adr/README.md)
+
 ## Features
 
 - **Plus Mode**: Automatically upgrades items and stops when target plus level is reached

@@ -81,3 +81,99 @@ python tools/ctx.py <konu>                    # "bu iş için hangi dosyalar?" (
 > `bot_plus.py`+`bot_stat.py`, `input_controller.py` → `bot_base.py` içindeki Win32 yardımcıları,
 > `assets/alarm.wav` → `winsound.Beep` ile üretilen tonlar, `app_window.py` → `main_window.py`.
 > Doğru kaynak **koddur**, bu plan değil. ADR'ler: [adr/](docs/adr/).
+---
+
+## 5. Görev → dosya yönlendirmesi (nereye ne yazılır)
+
+Bu tablo **kaynak gerçeğidir**. Emin değilsen `python tools/ctx.py <konu>` çalıştır.
+
+| Görev | Düzenlenecek dosya | Önce oku |
+|---|---|---|
+| OCR ön işleme / Tesseract ayarı | `src/core/ocr.py` | `docs/modules/core-ocr.md` |
+| Yeni log formatı / regex | `src/core/ocr.py` | `docs/modules/core-ocr.md` (sıra kuralı) |
+| Stat değer çözümleme (`new_avg`/`new_value`) | `src/core/bot_stat.py` | `docs/modules/core-bot-stat.md` |
+| Plus modu döngüsü / hedef | `src/core/bot_plus.py` | `docs/modules/core-bot-plus.md` |
+| Yeni bot modu | `src/core/bot_<mod>.py` **+ `config.py` + `ocr.py` + `main_window.py`** | `docs/patterns.md` Tarif 1 |
+| Thread / pause / stop / durum | `src/core/bot_base.py` | `docs/modules/core-bot-base.md` |
+| Tıklama, pencere, alarm | `src/core/bot_base.py` | `docs/modules/core-bot-base.md` |
+| Widget / buton / arayüz | `src/gui/main_window.py` | `docs/modules/gui-main-window.md` |
+| Koordinat / ROI seçimi | `src/gui/coordinate_picker.py` | `docs/modules/gui-coordinate-picker.md` |
+| Yeni ayar / varsayılan | `src/core/config.py` | `docs/modules/core-config.md` |
+| Ekran görüntüsü / monitör | `src/core/screen_capture.py` | `docs/modules/core-screen-capture.md` |
+| Bağımlılık / `.exe` paketleme | `requirements.txt` + `sro_alchemy_bot.spec` | `docs/modules/entrypoint.md` |
+| Başlangıç / log kurulumu | `main.py` | `docs/modules/entrypoint.md` |
+
+### 5.1 Sık yapılan yanlışlar
+
+| Yanlış | Doğrusu |
+|---|---|
+| `core/` içine `import tkinter` | Botlar Tk bilmez; UI güncellemesi callback ile gelir |
+| `start()` çağırıp `configure()`'ı atlamak | `configure()` önce; aksi halde `AttributeError` |
+| Yeni regex'i ilk sıraya koymak | Mevcut öncelik sırasını koru, gerekçeni dokümana yaz |
+| `config_manager.update(fuse_bttn_x=...)` | Alan adı `BotConfig` ile birebir olmalı, yoksa **sessizce** yutulur |
+| Yeni stat deseni eklerken `_extract_stat_value`'yi unutmak | Sonuç `new_avg`/`new_value` anahtarlarına normalize edilmeli |
+| Yeni bağımlılık eklerken spec'i atlamak | `requirements.txt` **+** `sro_alchemy_bot.spec` hiddenimports |
+| Bot thread'den doğrudan `widget.configure()` | `root.after(0, ...)` ile marshal et |
+| Yeni modül ekleyip haritayı güncellememek | `module-index.json` + `docs/modules/*.md` + `verify_docs.py` |
+
+---
+
+## 6. Değişiklik sonrası zorunlu kontrol
+
+```powershell
+python -m compileall -q src main.py     # sözdizimi
+python tools/verify_docs.py             # harita <-> kod tutarlılığı
+python tools/ctx.py <konu>              # yönlendirmeyi doğrula
+```
+
+Oyun gerektiren doğrulamalar: `docs/testing.md`.
+
+---
+
+## 7. Bilinen tuzaklar (özet)
+
+Tamamı ve kanıtları: `docs/gotchas.md`.
+
+1. `configure()` çağrılmadan `start()` → sessiz `AttributeError`.
+2. Tk widget'ları bot thread'inden güncelleniyor (thread-unsafe).
+3. `config_manager.update()` yazım hatalarını **sessizce** yutar.
+4. `update()` her çağrıda diske yazar (döngüde çağırma).
+5. OCR parser sırası davranışsal sözleşmedir.
+6. Stat sonucu polimorfiktir; yeni desen `_extract_stat_value` ile eşleşmeli.
+7. `_bring_window_to_front` başlık parametresini kullanmıyor.
+8. `mss` import anında açılır; Tesseract eksikse uygulama yine açılır (uyarı).
+9. `Test OCR` çalışma dizinine `debug_log_region.png` yazar.
+10. `.gitignore` `tests/` ve `test_*.py`'yi dışlıyor.
+
+---
+
+## 8. Araçlar
+
+| Komut | Ne yapar |
+|---|---|
+| `python tools/ctx.py <konu>` | Konuya göre **minimal context**: oku → düzenle → kurallar → doğrula |
+| `python tools/ctx.py --list` | Tüm görev ve modül anahtarları |
+| `python tools/ctx.py --module <ad>` | Bir modülün sözleşmesi ve sembolleri |
+| `python tools/ctx.py --file <yol>` | Bir dosyayı hangi modüller/görevler sahipleniyor |
+| `python tools/verify_docs.py` | Haritanın kodla uyumunu denetler (CI'ya bağlanabilir) |
+| `python list_windows.py` | SRO_Client penceresini bulur (pencere adı değiştiyse güncelle) |
+
+---
+
+## 9. Bir dosya değiştirdiysen
+
+Bu harita koda **bağlıdır**. Şunları yapmadan işi bitmiş sayma:
+
+- [ ] Yeni kaynak dosya → `docs/module-index.json` modül girdisi + `docs/modules/<ad>.md`
+- [ ] Yeni davranış kuralı → `docs/conventions.md` veya ilgili modül dokümanı
+- [ ] Yeni tuzak keşfettin → `docs/gotchas.md`
+- [ ] Mimari karar değişti → `docs/adr/` (eskiyi silme, `Superseded` işaretle)
+- [ ] Yeni gerçek kullanım kalıbı → `docs/patterns.md` tarifi
+- [ ] `python tools/verify_docs.py` → **PASSED** olmalı
+
+---
+
+## 10. Terimler
+
+`+` basma, harmony, stat, fuse, ROI, PSM, Otsu, parse, iteration, daemon thread →
+`docs/glossary.md`.

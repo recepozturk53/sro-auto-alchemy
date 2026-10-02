@@ -1,0 +1,6 @@
+# SRO Auto-Alchemy Bot — AI Agent Rules
+
+Kurallar ve mimari bilgisi kök dizindeki [AGENTS.md](AGENTS.md) dosyasındadır.
+Bu dosya yalnızca Cursor'un o dosyayı otomatik yüklemesi içindir.
+
+Minimum context aracı: `python tools/ctx.py <konu>`
