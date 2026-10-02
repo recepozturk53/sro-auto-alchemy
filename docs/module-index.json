@@ -1,0 +1,198 @@
+{
+  "schema_version": 1,
+  "description": "Machine-readable module + task map. Read by tools/ctx.py, validated by tools/verify_docs.py. Source of truth for which files to touch for a given task.",
+  "entrypoint": "main.py",
+  "layers": {
+    "L0": "Bootstrap: logging, dependency preflight, Tk mainloop",
+    "L1": "Presentation: GUI widgets and overlays (Tk main thread only)",
+    "L2": "Orchestration: bot loops, state machine, threading (bot daemon thread)",
+    "L3": "Services: screen capture and OCR/parsing (pure services, no GUI)",
+    "L4": "Configuration: persisted settings (no heavy dependencies)"
+  },
+  "modules": {
+    "entrypoint": {
+      "files": ["main.py"],
+      "layer": "L0",
+      "doc": "docs/modules/entrypoint.md",
+      "role": "Application bootstrap: logging setup, dependency preflight, create MainWindow, run Tk mainloop.",
+      "symbols": ["setup_logging", "check_dependencies", "main"],
+      "depends_on": ["gui-main-window"],
+      "rules": [
+        "Do not import core modules directly here; MainWindow owns that wiring.",
+        "sys.path insertion of the repo root is required for the src package to resolve."
+      ]
+    },
+    "gui-main-window": {
+      "files": ["src/gui/main_window.py"],
+      "layer": "L1",
+      "doc": "docs/modules/gui-main-window.md",
+      "role": "CustomTkinter window: mode selector, target/timing entries, coordinate buttons, control buttons, status labels, log textbox.",
+      "symbols": ["MainWindow", "_setup_bots", "_load_config", "_on_mode_change", "_test_ocr", "_start_bot", "_on_status_change", "_on_log"],
+      "depends_on": ["core-config", "core-bot-plus", "core-bot-stat", "core-bot-base", "core-screen-capture", "core-ocr", "gui-coordinate-picker"],
+      "rules": [
+        "Tk widgets may only be touched on the Tk main thread; bot callbacks arrive on the bot thread.",
+        "Bot lifecycle (start/pause/stop) must go through BotBase public methods.",
+        "Never keep configuration only in widgets: every change must reach config_manager."
+      ]
+    },
+"gui-coordinate-picker": {
+      "files": ["src/gui/coordinate_picker.py"],
+      "layer": "L1",
+      "doc": "docs/modules/gui-coordinate-picker.md",
+      "role": "Fullscreen transparent overlay to pick a point (fuse button) or a rectangle (log ROI) using event.x_root/event.y_root.",
+      "symbols": ["CoordinatePicker.pick_point", "RegionSelector.select_region", "SelectionHelper"],
+      "depends_on": [],
+      "rules": [
+        "Coordinates must be absolute screen pixels (x_root/y_root), never widget-relative.",
+        "RegionSelector enforces a 10x10 px minimum size.",
+        "Keep this module dependency-free: no core imports allowed."
+      ]
+    },
+    "core-bot-base": {
+      "files": ["src/core/bot_base.py"],
+      "layer": "L2",
+      "doc": "docs/modules/core-bot-base.md",
+      "role": "BotBase ABC: daemon thread lifecycle, cooperative pause/stop, BotStatus/BotState/StopReason, Win32 click, SRO_Client foreground activation, winsound alarms.",
+      "symbols": ["BotState", "StopReason", "BotStatus", "BotBase", "BotBase.start", "BotBase.stop", "BotBase.pause", "BotBase._check_pause_stop", "BotBase._click_at", "BotBase._bring_window_to_front", "BotBase._play_alarm"],
+      "depends_on": [],
+      "rules": [
+        "Subclasses must implement _run_loop and _perform_iteration.",
+        "Every loop iteration must call _check_pause_stop() first and bail out when it returns True.",
+        "Status changes must go through _update_status so callbacks fire.",
+        "This module owns all Win32 primitives; there is no input_controller module."
+      ]
+    },
+    "core-bot-plus": {
+      "files": ["src/core/bot_plus.py"],
+      "layer": "L2",
+      "doc": "docs/modules/core-bot-plus.md",
+      "role": "PlusModeBot: click fuse, wait for the animation, OCR the log, stop when the current plus level is at or above target.",
+      "symbols": ["PlusModeBot", "PlusModeBot.configure", "PlusModeBot._run_loop", "PlusModeBot._perform_iteration"],
+      "depends_on": ["core-bot-base", "core-config", "core-screen-capture", "core-ocr"],
+      "rules": [
+        "configure() must be called before start(): _animation_delay/_click_delay/_max_failures are only set there.",
+        "The loop ends on target reached (COMPLETED) or consecutive failures >= _max_failures (FAILED)."
+      ]
+    },
+    "core-bot-stat": {
+      "files": ["src/core/bot_stat.py"],
+      "layer": "L2",
+      "doc": "docs/modules/core-bot-stat.md",
+      "role": "StatModeBot: click fuse, OCR the stat/percentage line, resolve the current value from the parsed dict, track best/worst, stop at threshold.",
+      "symbols": ["StatModeBot", "StatModeBot.configure", "StatModeBot._run_loop", "StatModeBot._perform_iteration", "StatModeBot._extract_stat_value"],
+      "depends_on": ["core-bot-base", "core-config", "core-screen-capture", "core-ocr"],
+      "rules": [
+        "configure() must be called before start().",
+        "_extract_stat_value is the only place that reads the polymorphic ParseResult.value dict (new_avg, then new_value, else 0.0)."
+      ]
+    },
+    "core-screen-capture": {
+      "files": ["src/core/screen_capture.py"],
+      "layer": "L3",
+      "doc": "docs/modules/core-screen-capture.md",
+      "role": "ScreenCapture singleton wrapping mss: grab a rectangle and return a BGR numpy array, plus PIL and monitor helpers.",
+      "symbols": ["ScreenCapture.capture_region", "ScreenCapture.capture_full_screen", "ScreenCapture.capture_region_as_pil", "ScreenCapture.get_screen_size", "ScreenCapture.save_capture", "ScreenCapture.close"],
+      "depends_on": [],
+      "rules": [
+        "capture_region returns BGRA to BGR numpy; every consumer (cv2, OCR) expects BGR, never PIL.",
+        "Coordinates are absolute screen pixels and bounds are not validated.",
+        "The mss instance is created at import time, so importing this module requires a Windows desktop session."
+      ]
+    },
+    "core-ocr": {
+      "files": ["src/core/ocr.py"],
+      "layer": "L3",
+      "doc": "docs/modules/core-ocr.md",
+      "role": "OCRProcessor singleton: OpenCV preprocessing (gray/blur/Otsu/close), Tesseract extraction with a char whitelist, then strict regex parsing into ParseResult.",
+      "symbols": ["ParseResult", "OCRProcessor.preprocess_image", "OCRProcessor.extract_text", "OCRProcessor.parse_plus_result", "OCRProcessor.parse_stat_result", "OCRProcessor.process_log_region", "OCRProcessor.debug_save_preprocessed"],
+      "depends_on": [],
+      "rules": [
+        "Parser order is a contract: earlier patterns win (plus: failed, then +N, then plus N, then success+number; stat: changedto, parens, range, simple, arrow, failed).",
+        "process_log_region is the only entry point bots may call; mode must be plus or stat.",
+        "Stat results are polymorphic: dicts hold either old_value/new_value/improved or old_range/new_range/old_avg/new_avg/improved."
+      ]
+    },
+    "core-config": {
+      "files": ["src/core/config.py"],
+      "layer": "L4",
+      "doc": "docs/modules/core-config.md",
+      "role": "BotConfig dataclass (all persisted settings) plus the thread-safe ConfigManager singleton that loads/saves %APPDATA%/SroAutoAlchemy/config.json.",
+      "symbols": ["BotConfig", "ConfigManager", "ConfigManager.update", "ConfigManager.save", "ConfigManager.load", "ConfigManager.reset", "ConfigManager.get_fuse_button", "ConfigManager.set_fuse_button", "ConfigManager.get_log_roi", "ConfigManager.set_log_roi", "ConfigManager.is_configured", "config_manager"],
+      "depends_on": [],
+      "rules": [
+        "New settings must be added to BotConfig with an explicit default.",
+        "update() silently drops unknown keys (hasattr guard), so a typo is invisible: verify field names.",
+        "Importing this module reads config.json from disk (import side effect).",
+        "Keep this module free of cv2/mss/pytesseract/tkinter imports."
+      ]
+    }
+  },
+  "tasks": {
+    "ocr": {
+      "summary": "OCR preprocessing, Tesseract settings, regex patterns, parse results",
+      "read": ["docs/modules/core-ocr.md", "docs/architecture.md"],
+      "edit": ["src/core/ocr.py"],
+      "verify": ["python -m compileall -q src", "GUI Test OCR button with a real log line"],
+      "rules": ["Keep the parser order intact and justify the priority of any new pattern."]
+    },
+    "gui": {
+      "summary": "Widgets, layout, buttons, entries, log box, mode switching",
+      "read": ["docs/modules/gui-main-window.md"],
+      "edit": ["src/gui/main_window.py"],
+      "verify": ["python -m compileall -q src/gui", "python main.py for visual check"],
+      "rules": ["Tk main thread rule: never update widgets directly inside a bot-thread callback."]
+    },
+    "picker": {
+      "summary": "Coordinate / region selection overlay",
+      "read": ["docs/modules/gui-coordinate-picker.md"],
+      "edit": ["src/gui/coordinate_picker.py"],
+      "verify": ["python main.py > Pick Fuse Button / Select Log Area"],
+      "rules": ["Produce screen-space coordinates only (x_root/y_root)."]
+    },
+    "config": {
+      "summary": "New settings, defaults, persistence, AppData JSON",
+      "read": ["docs/modules/core-config.md"],
+      "edit": ["src/core/config.py"],
+      "verify": ["python -c \"from src.core.config import config_manager; print(config_manager.config)\""],
+      "rules": ["Field name equals the config.json key; do not remove old keys (backward compatibility)."]
+    },
+    "bot": {
+      "summary": "Bot loop, plus/stat modes, stop conditions, alarm",
+      "read": ["docs/modules/core-bot-plus.md", "docs/modules/core-bot-stat.md", "docs/modules/core-bot-base.md"],
+      "edit": ["src/core/bot_plus.py", "src/core/bot_stat.py", "src/core/bot_base.py"],
+      "verify": ["python -m compileall -q src/core"],
+      "rules": ["configure() before start() is mandatory."]
+    },
+    "thread": {
+      "summary": "Threading, locks, callbacks, UI updates from the bot thread",
+      "read": ["docs/architecture.md", "docs/gotchas.md"],
+      "edit": ["src/core/bot_base.py", "src/gui/main_window.py"],
+      "verify": ["python main.py > Start/Pause/Stop observation"],
+      "rules": ["Tk calls from the bot thread are thread-unsafe; marshal with root.after(0, ...)."]
+    },
+    "window": {
+      "summary": "SRO_Client window detection, foreground activation, clicking, alarms",
+      "read": ["docs/modules/core-bot-base.md"],
+      "edit": ["src/core/bot_base.py"],
+      "verify": ["python list_windows.py"],
+      "rules": ["Wrap Win32 calls in try/except and log the failure."]
+    },
+    "capture": {
+      "summary": "Screen capture, ROI, monitors, image format",
+      "read": ["docs/modules/core-screen-capture.md"],
+      "edit": ["src/core/screen_capture.py"],
+      "verify": ["python -c \"from src.core.screen_capture import screen_capture; print(screen_capture.capture_region(0,0,100,100).shape)\""],
+      "rules": ["Return BGR numpy; converting to PIL is the consumer job."]
+    },
+    "packaging": {
+      "summary": "PyInstaller spec, exe build, hidden imports",
+      "read": ["docs/modules/entrypoint.md", "docs/modules/core-ocr.md"],
+      "edit": ["sro_alchemy_bot.spec", "requirements.txt"],
+      "verify": ["pyinstaller sro_alchemy_bot.spec"],
+      "rules": ["Any new third-party dependency must also be added to spec hiddenimports."]
+    }
+  },
+  "conventions_doc": "docs/conventions.md",
+  "gotchas_doc": "docs/gotchas.md",
+  "glossary_doc": "docs/glossary.md"
+}
