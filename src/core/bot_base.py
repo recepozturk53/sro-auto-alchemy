@@ -5,8 +5,9 @@ Base bot module providing common functionality for both modes.
 import threading
 import time
 import ctypes
+from ctypes import wintypes
 from abc import ABC, abstractmethod
-from typing import List, Optional, Callable
+from typing import List, Optional, Callable, Tuple
 from dataclasses import dataclass
 from enum import Enum
 import winsound
@@ -30,6 +31,75 @@ try:
 except ImportError:  # pragma: no cover - depends on host environment
     gw = None
     _HAS_PYGETWINDOW = False
+
+# --- SendInput plumbing -----------------------------------------------------
+# SRO reads mouse input from the Raw Input queue (DirectInput). SetCursorPos and
+# mouse_event only inject at the top-level message queue, so the game ignores
+# them; SendInput also feeds the Raw Input queue and therefore reaches the game.
+INPUT_MOUSE = 0
+MOUSEEVENTF_MOVE = 0x0001
+MOUSEEVENTF_LEFTDOWN = 0x0002
+MOUSEEVENTF_LEFTUP = 0x0004
+MOUSEEVENTF_VIRTUALDESK = 0x4000
+MOUSEEVENTF_ABSOLUTE = 0x8000
+
+SM_XVIRTUALSCREEN = 76
+SM_YVIRTUALSCREEN = 77
+SM_CXVIRTUALSCREEN = 78
+SM_CYVIRTUALSCREEN = 79
+
+
+class _MOUSEINPUT(ctypes.Structure):
+    """Win32 MOUSEINPUT."""
+
+    _fields_ = [
+        ("dx", wintypes.LONG),
+        ("dy", wintypes.LONG),
+        ("mouseData", wintypes.DWORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
+class _KEYBDINPUT(ctypes.Structure):
+    """Win32 KEYBDINPUT - present so the INPUT union keeps its real size."""
+
+    _fields_ = [
+        ("wVk", wintypes.WORD),
+        ("wScan", wintypes.WORD),
+        ("dwFlags", wintypes.DWORD),
+        ("time", wintypes.DWORD),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
+class _HARDWAREINPUT(ctypes.Structure):
+    """Win32 HARDWAREINPUT - present so the INPUT union keeps its real size."""
+
+    _fields_ = [
+        ("uMsg", wintypes.DWORD),
+        ("wParamL", wintypes.WORD),
+        ("wParamH", wintypes.WORD),
+    ]
+
+
+class _INPUTUNION(ctypes.Union):
+    """The union inside Win32 INPUT."""
+
+    _fields_ = [("mi", _MOUSEINPUT), ("ki", _KEYBDINPUT), ("hi", _HARDWAREINPUT)]
+
+
+class _INPUT(ctypes.Structure):
+    """
+    Win32 INPUT.
+
+    The union must keep its full size (40 bytes on x64): a struct holding only
+    MOUSEINPUT makes SendInput reject the call.
+    """
+
+    _anonymous_ = ("u",)
+    _fields_ = [("type", wintypes.DWORD), ("u", _INPUTUNION)]
 
 
 class BotState(Enum):
@@ -115,11 +185,12 @@ class BotBase(ABC):
     
     def _click_at(self, x: int, y: int, delay_ms: int = 50) -> None:
         """
-        Perform a mouse click at specified coordinates.
+        Perform a mouse click at the given screen coordinates.
 
-        Uses pywin32 (win32api/win32con) when available - the approach proven
-        to work on SRO_Client - and falls back to the raw ctypes mouse_event
-        calls otherwise.
+        Tries SendInput first (it feeds the Raw Input queue that DirectInput
+        games like SRO actually read), then falls back to SetCursorPos +
+        mouse_event. The cursor is verified before pressing, so a blocked click
+        never lands on a random spot.
 
         Args:
             x: X coordinate
@@ -127,34 +198,156 @@ class BotBase(ABC):
             delay_ms: Delay between down and up events
         """
         try:
-            if _HAS_WIN32API:
-                # Move cursor to position, then press and release the button.
-                win32api.SetCursorPos((x, y))
-                time.sleep(0.05)  # Wait for the cursor to move
-                win32api.mouse_event(
-                    win32con.MOUSEEVENTF_LEFTDOWN, x, y, 0, 0
-                )
-                time.sleep(delay_ms / 1000.0)
-                win32api.mouse_event(
-                    win32con.MOUSEEVENTF_LEFTUP, x, y, 0, 0
-                )
-            else:
-                user32 = ctypes.windll.user32
-                user32.SetCursorPos(x, y)
-                time.sleep(0.05)  # Wait for the cursor to move
+            if self._click_via_send_input(x, y, delay_ms):
+                self._log(f"Clicked at ({x}, {y}) [SendInput]")
+                return
 
-                MOUSEDOWN = 0x0002  # MOUSEEVENTF_LEFTDOWN
-                MOUSEUP = 0x0004    # MOUSEEVENTF_LEFTUP
+            if self._click_via_set_cursor_pos(x, y, delay_ms):
+                self._log(f"Clicked at ({x}, {y}) [SetCursorPos + mouse_event]")
+                return
 
-                user32.mouse_event(MOUSEDOWN, 0, 0, 0, 0)
-                time.sleep(delay_ms / 1000.0)
-                user32.mouse_event(MOUSEUP, 0, 0, 0, 0)
-
-            self._log(f"Clicked at ({x}, {y})")
-
+            self._log(
+                f"Click FAILED at ({x}, {y}): the cursor could not be positioned. "
+                "If the game runs as Administrator, restart this tool as "
+                "Administrator too (Windows blocks synthetic input otherwise)."
+            )
         except Exception as e:
             self._log(f"Click error: {e}")
     
+    @staticmethod
+    def _is_elevated() -> bool:
+        """Whether this process runs with Administrator privileges."""
+        try:
+            return bool(ctypes.windll.shell32.IsUserAnAdmin())
+        except Exception:
+            return False
+
+    @staticmethod
+    def _to_virtual_desktop(x: int, y: int) -> Tuple[int, int]:
+        """
+        Convert screen pixels to the 0..65535 range SendInput expects.
+
+        Uses the full virtual desktop, so multi-monitor setups keep working.
+
+        Args:
+            x: X coordinate in screen pixels
+            y: Y coordinate in screen pixels
+
+        Returns:
+            Normalised (dx, dy) for MOUSEEVENTF_ABSOLUTE
+        """
+        user32 = ctypes.windll.user32
+        left = user32.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        top = user32.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        width = max(user32.GetSystemMetrics(SM_CXVIRTUALSCREEN), 1)
+        height = max(user32.GetSystemMetrics(SM_CYVIRTUALSCREEN), 1)
+        nx = int(round((x - left) * 65535 / max(width - 1, 1)))
+        ny = int(round((y - top) * 65535 / max(height - 1, 1)))
+        return max(0, min(65535, nx)), max(0, min(65535, ny))
+
+    @staticmethod
+    def _send_mouse_input(flags: int, dx: int = 0, dy: int = 0) -> bool:
+        """
+        Inject one mouse event through SendInput.
+
+        Args:
+            flags: MOUSEEVENTF_* flags
+            dx: Absolute X (0..65535) when MOUSEEVENTF_ABSOLUTE is set
+            dy: Absolute Y (0..65535) when MOUSEEVENTF_ABSOLUTE is set
+
+        Returns:
+            True when the event was accepted
+        """
+        user32 = ctypes.windll.user32
+        event = _INPUT(
+            type=INPUT_MOUSE,
+            mi=_MOUSEINPUT(
+                dx=dx, dy=dy, mouseData=0, dwFlags=flags, time=0, dwExtraInfo=None
+            ),
+        )
+        return user32.SendInput(1, ctypes.byref(event), ctypes.sizeof(_INPUT)) == 1
+
+    @staticmethod
+    def _cursor_position() -> Optional[Tuple[int, int]]:
+        """Current cursor position in screen pixels (None when unavailable)."""
+        point = wintypes.POINT()
+        if ctypes.windll.user32.GetCursorPos(ctypes.byref(point)):
+            return point.x, point.y
+        return None
+
+    def _cursor_near(self, x: int, y: int, tolerance: int = 3) -> bool:
+        """Whether the cursor ended up at (or very near) the target point."""
+        position = self._cursor_position()
+        if position is None:
+            return False
+        return abs(position[0] - x) <= tolerance and abs(position[1] - y) <= tolerance
+
+    def _set_cursor_pos(self, x: int, y: int) -> bool:
+        """Move the cursor, preferring pywin32. Returns True when it worked."""
+        if _HAS_WIN32API:
+            try:
+                win32api.SetCursorPos((x, y))
+                return True
+            except Exception as e:
+                self._log(f"win32api.SetCursorPos failed: {e}")
+        return bool(ctypes.windll.user32.SetCursorPos(x, y))
+
+    def _mouse_button_event(self, flag: int) -> bool:
+        """Send one left-button down/up event through pywin32 or ctypes."""
+        if _HAS_WIN32API:
+            try:
+                win32api.mouse_event(flag, 0, 0, 0, 0)
+                return True
+            except Exception as e:
+                self._log(f"win32api.mouse_event failed: {e}")
+        return bool(ctypes.windll.user32.mouse_event(flag, 0, 0, 0, 0))
+
+    def _click_via_send_input(self, x: int, y: int, delay_ms: int) -> bool:
+        """
+        Move + click through SendInput - the path games actually listen to.
+
+        Returns:
+            True when the click was sent from the correct position
+        """
+        nx, ny = self._to_virtual_desktop(x, y)
+        moved = self._send_mouse_input(
+            MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, nx, ny
+        )
+        if not moved:
+            return False
+
+        time.sleep(0.03)  # Let the cursor settle before pressing
+        if not self._cursor_near(x, y):
+            # Accepted by the API but the cursor did not follow: an elevated
+            # foreground window is swallowing synthetic input.
+            self._log("SendInput move ignored (cursor did not move)")
+            return False
+
+        self._send_mouse_input(MOUSEEVENTF_LEFTDOWN)
+        time.sleep(delay_ms / 1000.0)
+        self._send_mouse_input(MOUSEEVENTF_LEFTUP)
+        return True
+
+    def _click_via_set_cursor_pos(self, x: int, y: int, delay_ms: int) -> bool:
+        """
+        Fallback: SetCursorPos + mouse_event (top-level message queue).
+
+        Returns:
+            True when the click was sent from the correct position
+        """
+        if not self._set_cursor_pos(x, y):
+            return False
+
+        time.sleep(0.05)  # Wait for the cursor to move
+        if not self._cursor_near(x, y):
+            self._log("SetCursorPos ignored (cursor did not move)")
+            return False
+
+        self._mouse_button_event(MOUSEEVENTF_LEFTDOWN)
+        time.sleep(delay_ms / 1000.0)
+        self._mouse_button_event(MOUSEEVENTF_LEFTUP)
+        return True
+
     @staticmethod
     def _window_title_candidates(window_title: str) -> List[str]:
         """
@@ -293,6 +486,13 @@ class BotBase(ABC):
         if self.is_running:
             self._log("Bot is already running")
             return False
+
+        if not self._is_elevated():
+            self._log(
+                "WARNING: Not running as Administrator. If SRO_Client runs "
+                "elevated, Windows blocks synthetic mouse input and the fuse "
+                "button will never be clicked - restart this tool as Administrator."
+            )
         
         self._stop_event.clear()
         self._pause_event.clear()

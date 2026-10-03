@@ -41,6 +41,9 @@
 | **pywin32** | `win32api`/`win32con`; tıklama + pencere kontrolü için birincil backend (ADR-0006) |
 | **pygetwindow** | Pencereyi `restore()`/`activate()` ile öne getiren yardımcı kütüphane |
 | **TESSERACT_CMD** | `tesseract.exe` yolunu elle belirten ortam değişkeni |
+| **SendInput** | Fare/klavye olayını Raw Input kuyruğuna yazan Win32 API'si; `mouse_event`'ten farklı olarak oyunlara ulaşır (ADR-0007) |
+| **Raw Input / DirectInput** | Oyunların girdiyi üst düzey mesaj kuyruğundan önce okuduğu katman |
+| **UIPI / elevation** | Ön planda yükseltilmiş pencere varken yükseltilmemiş sürecin imleç kontrolünün engellenmesi; çözüm: botu yönetici çalıştırmak |
 
 ## Log formatları (gerçek örnekler)
 

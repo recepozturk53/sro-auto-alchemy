@@ -119,3 +119,49 @@ düğmesine bastığında lütfen beklenen süre kadar bekler.
 **gerçekleşmedi**. Gerçek yapı `docs/module-index.json` ve `docs/architecture.md`.
 
 **Savunma:** Plan dokümanını kaynak olarak kullanma; AGENTS.md + module-index esas al.
+
+## 13. `SetCursorPos` yönetici olmayan süreçte sessizce başarısız olur (UIPI)
+
+Ön planda **yükseltilmiş (elevated)** bir pencere varken (SRO_Client genelde
+yönetici olarak çalışır), Windows yükseltilmemiş süreçlerin fare/klavye
+kontrolünü engeller. `SetCursorPos` `FALSE` döner; `GetLastError` `0`
+(ERROR_SUCCESS) olduğu için pywin32 şu hatayı üretir:
+
+```
+Click error: (0, 'SetCursorPos', 'No error message is available')
+```
+
+**Savunma:** Botu **yönetici olarak** çalıştır. `BotBase.start()` yönetici
+değilse uyarı loglar; `main.py` de konsola not basar. Tanılamak için:
+
+```powershell
+python -c "import ctypes; print(ctypes.windll.shell32.IsUserAnAdmin())"
+```
+
+## 14. `mouse_event` Raw Input okuyan oyunlara ulaşmıyor
+
+SRO DirectInput/Raw Input kullanır. `SetCursorPos` + `mouse_event` olayları üst
+düzey mesaj kuyruğuna enjekte eder ve oyun bunları **hiç görmez**; tıklama
+sessizce kaybolur. `SendInput` aynı Raw Input kuyruğuna yazar.
+
+**Savunma:** `_click_at` önce `SendInput` dener
+([ADR-0007](adr/0007-sendinput-and-elevation.md)). Log'daki `[SendInput]` /
+`[SetCursorPos + mouse_event]` etiketi hangi yolun kullanıldığını söyler.
+
+## 15. İmleç doğrulanmadan tıklamak rastgele yere tıklar
+
+Eski kod `SetCursorPos` başarısız olsa bile `mouse_event(LEFTDOWN)` gönderiyordu;
+imleç hedefte olmadığı için tıklama rastgele bir pencereye gidiyordu.
+
+**Savunma:** `_click_via_send_input` / `_click_via_set_cursor_pos` tıklamadan önce
+`GetCursorPos` ile imlecin hedefte olduğunu doğrular (`_cursor_near`). Değilse
+tuşa basılmaz ve `Click FAILED at (x, y)` loglanır.
+
+## 16. Oyun log panelindeki kaydırma çubuğu OCR'a sahte satır üretir
+
+SRO log ROI'sinin sağ kenarındaki kaydırma çubuğu ve panel butonları
+binarizasyonda koyu lekelere dönüşür; Tesseract bunları `Van oe (Y]` gibi
+satırlar olarak okur ve `raw_text` kirlenir.
+
+**Savunma:** `preprocess_image` `MORPH_OPEN` uygular ve 15 px beyaz kenarlık
+ekler. Kaldırılırsa sahte satırlar geri gelir.

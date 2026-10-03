@@ -40,11 +40,13 @@ Bu ortak kasıtlıdır: yeni mod eklerken 1–7'yi kopyalamak yerine `BotBase` y
 ```
 BGR ndarray
   → cvtColor(BGR2GRAY)                 gri tonlama
-  → resize(2x) (yükseklik < 200 px)    küçük kırpımları büyüt
+  → resize(3x/2x) (h<200 / h<400)      küçük kırpımları büyüt
   → GaussianBlur(3,3)                 gürültü azaltma
   → threshold(THRESH_BINARY + THRESH_OTSU)   Otsu ile otomatik eşik
   → invert (mean < 127 ise)            açık-yazı/koyu-zemin → koyu-yazı/açık-zemin
-  → morphologyEx(MORPH_CLOSE, 2x2)    karakterleri birleştir
+  → morphologyEx(OPEN, 2x2)           kaydırma çubuğu / benek gürültüsünü at
+  → morphologyEx(CLOSE, 2x2)          kopan çizgileri birleştir
+  → copyMakeBorder(15 px beyaz)        Tesseract kenar boşluğu ister
   → pytesseract.image_to_string(--psm N --oem 3 -c tessedit_char_whitelist=...)
   → regex ayrıştırma                  ParseResult
 ```
@@ -125,13 +127,21 @@ sessizce düşürür. Alan adı = JSON anahtarıdır. Bkz. [modules/core-config.
 
 | Yardımcı | Ne yapar |
 |---|---|
-| `_click_at(x, y, delay_ms)` | pywin32 varsa `win32api.SetCursorPos` + `mouse_event(LEFTDOWN/LEFTUP)`; yoksa `ctypes` ile aynısı |
-| `_window_title_candidates(title)` | `title` → `SRO_Client` → `Silkroad` sıralı, tekilleştirilmiş başlık parçaları |
-| `_bring_window_to_front(title)` | pygetwindow varsa `restore()` + `activate()`; yoksa `EnumWindows` + `ShowWindow(SW_RESTORE)` + `SetForegroundWindow` + Alt tuşu hilesi |
+| `_click_at(x, y, delay_ms)` | Önce **SendInput** (imleç + `LEFTDOWN`/`LEFTUP`), olmazsa `SetCursorPos` + `mouse_event`; imleç doğrulanmadan basılmaz |
+| `_to_virtual_desktop(x, y)` | Sanal masaüstüne göre 0..65535 absolüt koordinat |
+| `_is_elevated()` / `_cursor_near()` | Yönetici denetimi ve imleç doğrulaması |
+| `_window_title_candidates(title)` | `title` → `SRO_Client` → `Silkroad` sıralı başlık parçaları |
+| `_bring_window_to_front(title)` | pygetwindow varsa `restore()` + `activate()`; yoksa `EnumWindows` + `SetForegroundWindow` + Alt tuşu hilesi |
 | `_play_alarm(kind)` | `winsound.Beep` ile success/failure/warning tonları |
 
-Girdi backend'i iki katmanlıdır (ADR-0006): birincil yol **pywin32 + pygetwindow**,
-yedek yol saf `ctypes`. İki kitaplık da isteğe bağlı bağımlılıktır; eksikse uygulama
-çökmez, yedek yola düşer. Başlık eşleşmesi artık `window_title` parametresini
-kullanır ve oyun penceresi adı değişirse `_window_title_candidates` güncellenir.
+Tıklama **SendInput** tabanlıdır ([ADR-0007](adr/0007-sendinput-and-elevation.md)):
+SRO DirectInput/Raw Input okuduğu için `mouse_event` olayları oyuna ulaşmaz.
+Pencere aktivasyonu **pygetwindow** ile yapılır
+([ADR-0006](adr/0006-input-backend-pywin32-pygetwindow.md)); her iki bağımlılık da
+isteğe bağlıdır ve yoksa saf `ctypes` yedeği devreye girer.
+
+> **Yönetici yetkisi şarttır.** Ön planda yükseltilmiş bir pencere (genelde
+> SRO_Client) varken Windows, yükseltilmemiş sürecin imleç kontrolünü engeller
+> (`SetCursorPos` hata 0 ile başarısız olur). Bot yönetici olarak çalıştırılmalıdır.
+
 Tanılamak için: `python list_windows.py`.

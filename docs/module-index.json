@@ -87,7 +87,7 @@
       ],
       "layer": "L2",
       "doc": "docs/modules/core-bot-base.md",
-      "role": "BotBase ABC: daemon thread lifecycle, cooperative pause/stop, BotStatus/BotState/StopReason, Win32 click, SRO_Client foreground activation, winsound alarms.",
+      "role": "BotBase ABC: daemon thread lifecycle, cooperative pause/stop, BotStatus/BotState/StopReason, SendInput-based clicking (elevation-aware), SRO_Client foreground activation via pygetwindow, winsound alarms.",
       "symbols": [
         "BotState",
         "StopReason",
@@ -98,6 +98,10 @@
         "BotBase.pause",
         "BotBase._check_pause_stop",
         "BotBase._click_at",
+        "BotBase._click_via_send_input",
+        "BotBase._to_virtual_desktop",
+        "BotBase._is_elevated",
+        "BotBase._cursor_near",
         "BotBase._bring_window_to_front",
         "BotBase._window_title_candidates",
         "BotBase._play_alarm"
@@ -430,7 +434,10 @@
       ],
       "rules": [
         "Wrap Win32 calls in try/except and log the failure.",
-        "Prefer pywin32/pygetwindow; keep the ctypes fallback valid too (ADR-0006).",
+        "Clicking uses SendInput first (DirectInput/RawInput games only see SendInput), then SetCursorPos+mouse_event (ADR-0007).",
+        "Never press the button unless the cursor was verified at the target; a blocked click must not land elsewhere.",
+        "The tool must run elevated (Administrator) or Windows blocks synthetic input to an elevated game window.",
+        "Prefer pygetwindow for window activation; keep the ctypes fallback valid (ADR-0006).",
         "New input dependencies must be added to requirements.txt and sro_alchemy_bot.spec hiddenimports."
       ],
       "keywords": [
@@ -448,8 +455,15 @@
         "win32api",
         "win32con",
         "pygetwindow",
+        "sendinput",
+        "rawinput",
+        "admin",
+        "elevated",
+        "uipi",
+        "cursor",
         "pencere",
-        "tiklama"
+        "tiklama",
+        "yonetici"
       ]
     },
     "capture": {

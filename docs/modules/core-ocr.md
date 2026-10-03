@@ -13,7 +13,7 @@ Bu modül **tek OCR kapısıdır**: botlar doğrudan Tesseract çağırmaz, her 
 | Adım | Metot | Ne yapar |
 |---|---|---|
 | 0 | `locate_tesseract` (import anında) | `PATH` → yaygın kurulum dizinleri → `TESSERACT_CMD`; `get_tesseract_version()` ile doğrular |
-| 1 | `preprocess_image` | `cvtColor(BGR2GRAY)` → `resize(2x)` (h<200) → `GaussianBlur(3,3)` → `threshold(THRESH_BINARY + THRESH_OTSU)` → **invert** (mean<127) → `morphologyEx(MORPH_CLOSE, 2x2)` |
+| 1 | `preprocess_image` | `cvtColor(BGR2GRAY)` → `resize(3x)` (h<200, 2x h<400) → `GaussianBlur(3,3)` → `threshold(THRESH_BINARY + THRESH_OTSU)` → **invert** (mean<127) → `MORPH_OPEN` → `MORPH_CLOSE` → 15 px beyaz kenarlık |
 | 2 | `extract_text` | Tesseract yoksa boş string döner; varsa `pytesseract.image_to_string(..., --psm N --oem 3 -c tessedit_char_whitelist=...)` |
 | 3 | `parse_*_result` | Saf metin → `ParseResult` (regex) |
 
@@ -96,6 +96,9 @@ nedenidir:
 - `preprocess_image` çıktısı **koyu yazı / açık zemin** olmalıdır: oyun log'u
   açık-yazı/koyu-zemin olduğu için görüntü ortalama < 127 ise otomatik ters
   çevrilir. Bu adım kaldırılırsa Tesseract doğruluğu ciddi biçimde düşer.
+- `MORPH_OPEN` log panelindeki **kaydırma çubuğu ve benek gürültüsünü** atar;
+  kaldırılırsa `Van oe (Y]` gibi sahte satırlar `raw_text`'e girer.
+- 15 px beyaz kenarlık Tesseract'ın satır/karakter segmentasyonunu iyileştirir.
 - `threshold` parametresi yalnızca **yedektir**; `THRESH_OTSU` aktifken OpenCV onu
   yok sayar.
 - Tesseract konumu import anında çözülür (`locate_tesseract`); kullanıcı motoru

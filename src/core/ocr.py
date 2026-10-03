@@ -151,9 +151,11 @@ class OCRProcessor:
 
             # Upscale small crops: Tesseract recognises glyphs much better when
             # they are not tiny.
-            if gray.shape[0] < 200:
+            height = gray.shape[0]
+            scale = 3.0 if height < 200 else (2.0 if height < 400 else 1.0)
+            if scale != 1.0:
                 gray = cv2.resize(
-                    gray, None, fx=2.0, fy=2.0, interpolation=cv2.INTER_CUBIC
+                    gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC
                 )
             
             # Apply Gaussian blur to reduce noise
@@ -173,9 +175,16 @@ class OCRProcessor:
             if float(np.mean(thresh)) < 127.0:
                 thresh = cv2.bitwise_not(thresh)
 
-            # Apply morphological operations to clean up text
+            # OPEN drops speckle noise (log scrollbar, panel edges) before CLOSE
+            # re-joins strokes that binarization broke apart.
             kernel = np.ones((2, 2), np.uint8)
-            cleaned = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+            cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+            cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
+
+            # Tesseract reads more reliably with a clean white margin.
+            cleaned = cv2.copyMakeBorder(
+                cleaned, 15, 15, 15, 15, cv2.BORDER_CONSTANT, value=255
+            )
             
             return cleaned
     

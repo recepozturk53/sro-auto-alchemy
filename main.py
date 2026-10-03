@@ -80,12 +80,28 @@ def check_dependencies():
     return True
 
 
+def is_admin() -> bool:
+    """Whether the current process has Administrator privileges."""
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except Exception:
+        return False
+
+
 def main():
     """Main entry point."""
     print("=" * 50)
     print("Silkroad Online Auto-Alchemy Bot")
     print("=" * 50)
     print()
+
+    if not is_admin():
+        print("NOTE: Not running as Administrator.")
+        print("      If SRO_Client runs elevated, Windows blocks synthetic mouse")
+        print("      input and the fuse button will never be clicked.")
+        print("      Restart this tool as Administrator if clicking fails.")
+        print()
     
     # Setup logging
     setup_logging()

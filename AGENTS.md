@@ -69,7 +69,7 @@ python tools/ctx.py <konu>                    # "bu iş için hangi dosyalar?" (
 | `main.py` | L0 | logging kurulumu, bağımlılık kontrolü, uygulama başlatma | [modules/entrypoint.md](docs/modules/entrypoint.md) |
 | `src/gui/main_window.py` | L1 | Ana pencere, mod seçimi, girdi alanları, butonlar, log kutusu | [modules/gui-main-window.md](docs/modules/gui-main-window.md) |
 | `src/gui/coordinate_picker.py` | L1 | Tam ekran overlay ile nokta (fuse) / dikdörtgen (log ROI) seçimi | [modules/gui-coordinate-picker.md](docs/modules/gui-coordinate-picker.md) |
-| `src/core/bot_base.py` | L2 | `BotBase` ABC, thread yönetimi, durum makinesi, tıklama (pywin32→ctypes) ve pencere (pygetwindow→ctypes) | [modules/core-bot-base.md](docs/modules/core-bot-base.md) |
+| `src/core/bot_base.py` | L2 | `BotBase` ABC, thread yönetimi, durum makinesi, tıklama (SendInput→SetCursorPos; **yönetici yetkisi gerekir**) ve pencere (pygetwindow→ctypes) | [modules/core-bot-base.md](docs/modules/core-bot-base.md) |
 | `src/core/bot_plus.py` | L2 | Plus modu ana döngüsü ve hedef kararı | [modules/core-bot-plus.md](docs/modules/core-bot-plus.md) |
 | `src/core/bot_stat.py` | L2 | Stat modu ana döngüsü, `new_avg`/`new_value` çözümleme | [modules/core-bot-stat.md](docs/modules/core-bot-stat.md) |
 | `src/core/screen_capture.py` | L3 | `mss` ile bölge yakalama, BGR ndarray üretimi | [modules/core-screen-capture.md](docs/modules/core-screen-capture.md) |
@@ -115,6 +115,8 @@ Bu tablo **kaynak gerçeğidir**. Emin değilsen `python tools/ctx.py <konu>` ç
 | Yeni stat deseni eklerken `_extract_stat_value`'yi unutmak | Sonuç `new_avg`/`new_value` anahtarlarına normalize edilmeli |
 | Yeni bağımlılık eklerken spec'i atlamak | `requirements.txt` **+** `sro_alchemy_bot.spec` hiddenimports |
 | Tıklamayı yalnızca `ctypes` ile bırakmak | pywin32/pygetwindow birincil; `ctypes` yedek yolunu da koru (ADR-0006) |
+| `Click error: (0, 'SetCursorPos', ...)` görünce koda dalmak | Kök neden UIPI: botu **yönetici** olarak çalıştır (ADR-0007) |
+| `mouse_event` ile oyuna tıklamayı beklemek | Raw Input oyunları görmez; `SendInput` kullan (ADR-0007) |
 | Bot thread'den doğrudan `widget.configure()` | `root.after(0, ...)` ile marshal et |
 | Yeni modül ekleyip haritayı güncellememek | `module-index.json` + `docs/modules/*.md` + `verify_docs.py` |
 
@@ -146,6 +148,10 @@ Tamamı ve kanıtları: `docs/gotchas.md`.
 8. `mss` import anında açılır; Tesseract eksikse uygulama yine açılır (uyarı).
 9. `Test OCR` çalışma dizinine `debug_log_region.png` yazar.
 10. `.gitignore` `tests/` ve `test_*.py`'yi dışlıyor.
+11. `SetCursorPos` yönetici olmayan süreçte sessizce başarısız olur (UIPI, hata 0) → botu **yönetici** çalıştır.
+12. `mouse_event` Raw Input oyunlarına ulaşmaz; tıklama **SendInput** ile yapılır.
+13. İmleç doğrulanmadan tuşa basılmaz → yanlış yere tıklama koruması.
+14. Log panelindeki kaydırma çubuğu OCR'a sahte satır üretir → `MORPH_OPEN` + beyaz kenarlık.
 
 ---
 
@@ -159,6 +165,7 @@ Tamamı ve kanıtları: `docs/gotchas.md`.
 | `python tools/ctx.py --file <yol>` | Bir dosyayı hangi modüller/görevler sahipleniyor |
 | `python tools/verify_docs.py` | Haritanın kodla uyumunu denetler (CI'ya bağlanabilir) |
 | `python list_windows.py` | SRO_Client penceresini bulur (pencere adı değiştiyse güncelle) |
+| `python diagnose_input.py` | Tıklama teşhisi: yönetici mi, SendInput imleci hedefe taşıyor mu (imleci oynatır, **tıklamaz**) |
 
 ---
 

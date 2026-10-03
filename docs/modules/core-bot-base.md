@@ -26,13 +26,17 @@ Tüm bot modlarının ortak tabanıdır. Şunları sağlar:
 
 | Metot | Davranış |
 |---|---|
-| `_click_at(x, y, delay_ms=50)` | **pywin32** varsa `win32api.SetCursorPos` + `mouse_event(MOUSEEVENTF_LEFTDOWN/LEFTUP)`; yoksa `ctypes` `SetCursorPos` + `mouse_event` |
+| `_click_at(x, y, delay_ms=50)` | Önce **SendInput** (`MOVE\|ABSOLUTE\|VIRTUALDESK` → `LEFTDOWN`/`LEFTUP`), olmazsa `SetCursorPos` + `mouse_event`. İmleç doğrulanmadan tuşa basılmaz |
+| `_to_virtual_desktop(x, y)` | Ekran pikselini sanal masaüstüne göre 0..65535 absolüt aralığa normalleştirir (çok monitör) |
+| `_is_elevated()` | `IsUserAnAdmin()`; `start()` yönetici değilse uyarı loglar |
+| `_cursor_near(x, y, tol=3)` | `GetCursorPos` ile imlecin hedefte olduğunu doğrular |
 | `_window_title_candidates(title)` | Sıralı, tekilleştirilmiş başlık parçaları: `title` → `SRO_Client` → `Silkroad` |
 | `_bring_window_to_front(title="SRO_Client")` | **pygetwindow** varsa `getWindowsWithTitle` + `restore()`/`activate()` (≈0.4 sn); yoksa `EnumWindows` + `ShowWindow(SW_RESTORE)` + `SetForegroundWindow` + `BringWindowToTop` + Alt-tuşu hilesi (≈0.5 sn) |
 | `_play_alarm(kind)` | `success`: 523→659→784→1047 Hz yükselen; `failure`: 400→300→200 Hz düşen; `warning`: 1000 Hz |
 
-> Girdi backend'i isteğe bağlı iki katmanlıdır (birincil: pywin32 + pygetwindow,
-> yedek: saf `ctypes`) — bkz. [ADR-0006](../adr/0006-input-backend-pywin32-pygetwindow.md).
+> Tıklama için [ADR-0007](../adr/0007-sendinput-and-elevation.md) (SendInput +
+> **yönetici yetkisi**), pencere aktivasyonu için
+> [ADR-0006](../adr/0006-input-backend-pywin32-pygetwindow.md).
 
 ## Döngü şablonu (yeni mod eklerken kopyala)
 
@@ -87,5 +91,10 @@ def _run_loop(self) -> None:
 - `_bring_window_to_front` artık `window_title` parametresini gerçekten kullanır:
   `_window_title_candidates` sırayla `title` → `SRO_Client` → `Silkroad` arar
   (ADR-0006). Tanılamak için: `python list_windows.py`.
-- Girdi backend'i isteğe bağlıdır: `pywin32`/`pygetwindow` yoksa `ctypes` yedek
-  yolu devreye girer; uygulama çökmez ama tıklama güvenilirliği düşer.
+- **Tıklama yönetici yetkisi ister:** ön planda yükseltilmiş pencere varken
+  Windows yükseltilmemiş sürecin imleç kontrolünü engeller (ADR-0007).
+  `_is_elevated()` bunu denetler, `start()` uyarı loglar.
+- `_click_at` imleci doğrulamadan tuşa basmaz (`_cursor_near`); doğrulanamazsa
+  `Click FAILED at (x, y)` loglanır ve **hiçbir yere tıklanmaz**.
+- `pywin32`/`pygetwindow` isteğe bağlıdır: yoksa saf `ctypes` yedeği devreye
+  girer; uygulama çökmez.
