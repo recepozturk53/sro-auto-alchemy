@@ -26,17 +26,18 @@ Tüm bot modlarının ortak tabanıdır. Şunları sağlar:
 
 | Metot | Davranış |
 |---|---|
-| `_click_at(x, y, delay_ms=50)` | Önce **SendInput** (`MOVE\|ABSOLUTE\|VIRTUALDESK` → `LEFTDOWN`/`LEFTUP`), olmazsa `SetCursorPos` + `mouse_event`. İmleç doğrulanmadan tuşa basılmaz |
+| `_click_at(x, y, delay_ms=50)` | Önce **SendInput** (`MOVE\|ABSOLUTE\|VIRTUALDESK` → `LEFTDOWN`/`LEFTUP`), olmazsa `SetCursorPos` + `mouse_event`. İmleç doğrulanmadan tuşa basılmaz. Başarıda `True` döner |
+| `_abort_blocked_click()` | Tıklama iletilemezse çağrılır: durum `FAILED`/`StopReason.ERROR`, failure alarmı, `_stop_event.set()`. Plus/Stat iterasyonu bu durumda OCR'a geçmez |
 | `_to_virtual_desktop(x, y)` | Ekran pikselini sanal masaüstüne göre 0..65535 absolüt aralığa normalleştirir (çok monitör) |
 | `_is_elevated()` | `IsUserAnAdmin()`; `start()` yönetici değilse uyarı loglar |
 | `_cursor_near(x, y, tol=3)` | `GetCursorPos` ile imlecin hedefte olduğunu doğrular |
-| `_window_title_candidates(title)` | Sıralı, tekilleştirilmiş başlık parçaları: `title` → `SRO_Client` → `Silkroad` |
-| `_bring_window_to_front(title="SRO_Client")` | **pygetwindow** varsa `getWindowsWithTitle` + `restore()`/`activate()` (≈0.4 sn); yoksa `EnumWindows` + `ShowWindow(SW_RESTORE)` + `SetForegroundWindow` + `BringWindowToTop` + Alt-tuşu hilesi (≈0.5 sn) |
+| `_find_game_window(title)` | `EnumWindows` → görünür, süreci `Macro_Client.exe` olan (okunamazsa sınıfı `MaxiGuard` olan) pencere; `MaxiGuard` sınıfı ve başlık eşleşmesi önceliklidir |
+| `_bring_window_to_front(title="SRO_Client")` | Zaten öndeyse hemen `True`. Pencere donmuşsa (`IsHungAppWindow`) uyarı + `False`. Yoksa `ShowWindowAsync(SW_RESTORE)` (simge durumundaysa) + `SetForegroundWindow` (+ Alt-tuşu hilesi), ≈0.3 sn bekleyip doğrular |
 | `_play_alarm(kind)` | `success`: 523→659→784→1047 Hz yükselen; `failure`: 400→300→200 Hz düşen; `warning`: 1000 Hz |
 
 > Tıklama için [ADR-0007](../adr/0007-sendinput-and-elevation.md) (SendInput +
 > **yönetici yetkisi**), pencere aktivasyonu için
-> [ADR-0006](../adr/0006-input-backend-pywin32-pygetwindow.md).
+> [ADR-0008](../adr/0008-game-window-by-process.md).
 
 ## Döngü şablonu (yeni mod eklerken kopyala)
 
@@ -84,17 +85,26 @@ def _run_loop(self) -> None:
 - `configure()` bu sınıfta **yoktur**; her alt sınıf kendi imzasını tanımlar.
 - `_update_status` kilidi tutarken callback'i **senkron** çağırır → callback bot
   thread'inde çalışır. GUI tarafında `root.after(0, ...)` kullanılmalıdır.
-- `stop()` thread'i `timeout=2.0` ile join eder; `_perform_iteration` içindeki
-  uzun beklemeler (animasyon) stop'u geciktirebilir — `_check_pause_stop` ancak
-  iterasyon sonunda kontrol edilir.
+- `stop()` thread'i `timeout=2.0` ile join eder. `_fuse_and_wait` beklemeleri
+  `_stop_event.wait()` kullanır, stop hemen işler.
+- `_fuse_and_wait(mode)`: pencereyi öne getir → log baseline'ı → **tek** tıklama →
+  en az `_animation_delay` bekle → log ROI'yi `RESULT_POLL_INTERVAL_S` (0.25 sn)
+  aralıkla yokla; yeni sonucu `_detect_new_result` bulur: `_new_line_strip` yeni satırları piksel karşılaştırmasıyla ayırır (aynı değer üst üste gelse de), yalnızca o şerit OCR'lanır; stat modunda `stat_events` + `_pick_event`, plus modunda `parse_plus_result`.
+  Buton animasyon boyunca "Cancel" olduğundan sonuç gelmeden asla tekrar
+  tıklanmaz. `RESULT_TIMEOUT_MS` (20 sn) dolarsa `success=False` döner; durdurma
+  veya engellenen tıklamada `None`.
 - `pause()` bir **toggle**'dır; her çağrı durumu ters çevirir.
-- `_bring_window_to_front` artık `window_title` parametresini gerçekten kullanır:
-  `_window_title_candidates` sırayla `title` → `SRO_Client` → `Silkroad` arar
-  (ADR-0006). Tanılamak için: `python list_windows.py`.
+- Oyun penceresi **süreç adı + sınıf** ile bulunur (`Macro_Client.exe` /
+  `MaxiGuard`), başlıkla değil — başlık girişten sonra değişir (ADR-0008).
+  Tanılamak için: `python list_windows.py`.
+- Pencere yardımcıları oyuna **asla mesaj göndermez** (`InternalGetWindowText`,
+  `ShowWindowAsync`). Yönetici olarak çalışırken `GetWindowTextLength` /
+  `ShowWindow` donmuş bir pencerede thread'i sonsuza kadar kilitler.
+- `stop()` thread 2 sn'de bitmezse takıldığı yığını loglar.
 - **Tıklama yönetici yetkisi ister:** ön planda yükseltilmiş pencere varken
   Windows yükseltilmemiş sürecin imleç kontrolünü engeller (ADR-0007).
   `_is_elevated()` bunu denetler, `start()` uyarı loglar.
 - `_click_at` imleci doğrulamadan tuşa basmaz (`_cursor_near`); doğrulanamazsa
   `Click FAILED at (x, y)` loglanır ve **hiçbir yere tıklanmaz**.
-- `pywin32`/`pygetwindow` isteğe bağlıdır: yoksa saf `ctypes` yedeği devreye
-  girer; uygulama çökmez.
+- `pywin32` isteğe bağlıdır: yoksa saf `ctypes` yedeği devreye girer; uygulama
+  çökmez.

@@ -89,6 +89,34 @@ def is_admin() -> bool:
         return False
 
 
+def relaunch_elevated() -> bool:
+    """
+    Restart this program through the UAC prompt.
+
+    SRO_Client runs elevated, and Windows (UIPI) drops mouse input that a
+    non-elevated process sends to an elevated window, so the bot must run at
+    the same level. Pass --no-elevate to skip this.
+
+    Returns:
+        True when the elevated copy was started (this one should exit)
+    """
+    import ctypes
+    import subprocess
+
+    if getattr(sys, "frozen", False):
+        # PyInstaller build: the exe is the program itself
+        executable, args = sys.executable, sys.argv[1:]
+    else:
+        executable, args = sys.executable, [str(Path(__file__).resolve())] + sys.argv[1:]
+
+    # ShellExecute returns a value > 32 on success; declining UAC returns <= 32
+    result = ctypes.windll.shell32.ShellExecuteW(
+        None, "runas", executable, subprocess.list2cmdline(args),
+        str(Path(__file__).resolve().parent), 1
+    )
+    return result > 32
+
+
 def main():
     """Main entry point."""
     print("=" * 50)
@@ -97,10 +125,13 @@ def main():
     print()
 
     if not is_admin():
+        if "--no-elevate" not in sys.argv and relaunch_elevated():
+            print("Restarted as Administrator in a new window.")
+            return
         print("NOTE: Not running as Administrator.")
-        print("      If SRO_Client runs elevated, Windows blocks synthetic mouse")
+        print("      SRO_Client runs elevated, so Windows blocks synthetic mouse")
         print("      input and the fuse button will never be clicked.")
-        print("      Restart this tool as Administrator if clicking fails.")
+        print("      Accept the UAC prompt when starting this tool.")
         print()
     
     # Setup logging

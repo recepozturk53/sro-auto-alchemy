@@ -4,8 +4,11 @@ Provides a clean, minimalist interface for bot control.
 """
 
 import customtkinter as ctk
+from dataclasses import replace
 from typing import Optional
+import queue
 import threading
+import time
 
 from ..core.config import config_manager, BotConfig
 from ..core.bot_plus import PlusModeBot
@@ -14,6 +17,9 @@ from ..core.bot_base import BotState, BotStatus
 from ..core.screen_capture import screen_capture
 from ..core.ocr import ocr_processor
 from .coordinate_picker import SelectionHelper
+
+# How often the Tk main thread applies UI updates queued by the bot thread
+UI_POLL_MS = 50
 
 
 class MainWindow:
@@ -34,6 +40,7 @@ class MainWindow:
         self.root.resizable(False, False)
         
         # Initialize components
+        self._ui_queue: "queue.Queue" = queue.Queue()
         self._selection_helper = SelectionHelper()
         self._plus_bot: Optional[PlusModeBot] = None
         self._stat_bot: Optional[StatModeBot] = None
@@ -356,14 +363,46 @@ class MainWindow:
         self._stat_bot = StatModeBot()
         
         # Set callbacks
+        # Bot callbacks run on the bot thread; they only enqueue (see _post_ui)
         self._plus_bot.set_callbacks(
-            on_status_change=self._on_status_change,
-            on_log=self._on_log
+            on_status_change=lambda status: self._post_ui(
+                self._on_status_change, replace(status)
+            ),
+            on_log=lambda message: self._post_ui(self._on_log, message)
         )
         self._stat_bot.set_callbacks(
-            on_status_change=self._on_status_change,
-            on_log=self._on_log
+            on_status_change=lambda status: self._post_ui(
+                self._on_status_change, replace(status)
+            ),
+            on_log=lambda message: self._post_ui(self._on_log, message)
         )
+
+    def _post_ui(self, func, *args) -> None:
+        """
+        Run a UI update on the Tk main thread.
+
+        Tk widgets must never be touched from the bot thread: when the main
+        thread is blocked in bot.stop() -> join(), a Tk call from the bot
+        thread waits for the main thread and both deadlock. Calls made on the
+        main thread run immediately; others are queued for _drain_ui_queue.
+        """
+        if threading.current_thread() is threading.main_thread():
+            func(*args)
+        else:
+            self._ui_queue.put((func, args))
+
+    def _drain_ui_queue(self) -> None:
+        """Apply queued UI updates (main thread), then poll again."""
+        try:
+            while True:
+                func, args = self._ui_queue.get_nowait()
+                try:
+                    func(*args)
+                except Exception as e:
+                    print(f"UI update error: {e}")
+        except queue.Empty:
+            pass
+        self.root.after(UI_POLL_MS, self._drain_ui_queue)
     
     def _load_config(self) -> None:
         """Load configuration and update UI."""
@@ -430,14 +469,20 @@ class MainWindow:
                 f"ERROR: Tesseract engine not found ({ocr_processor.tesseract_info()})"
             )
 
-        self._log_message("Testing OCR... Make sure game window is visible!")
-        
+        self._log_message("Testing OCR... bringing the game window to the front")
+
         try:
-            # Capture the log region
+            # The log area is usually covered by this window when the button
+            # is pressed: show the game first, capture, then come back.
+            if not self._stat_bot._bring_window_to_front():
+                self._log_message("WARNING: game window could not be activated")
+            time.sleep(0.4)
             log_image = screen_capture.capture_region(
                 log_roi[0], log_roi[1], log_roi[2], log_roi[3]
             )
-            
+            self.root.lift()
+            self.root.focus_force()
+
             # Save debug image
             import cv2
             debug_path = "debug_log_region.png"
@@ -584,4 +629,5 @@ class MainWindow:
     
     def run(self) -> None:
         """Run the main application."""
+        self.root.after(UI_POLL_MS, self._drain_ui_queue)
         self.root.mainloop()

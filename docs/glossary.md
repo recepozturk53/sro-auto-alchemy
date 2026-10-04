@@ -8,7 +8,7 @@
 | Terim | Anlam | Kodda nerede |
 |---|---|---|
 | **SRO / Silkroad** | Silkroad Online (oyun) | README, pencere başlığı |
-| **SRO_Client** | Oyunun pencere adı; `_bring_window_to_front` bunu arar | `bot_base.py` |
+| **SRO_Client** | Macro_Client.exe'nin giriş ekranındaki pencere adı (girişten sonra `[<karakter>] Oasis 2005`); pencere süreç + `MaxiGuard` sınıfıyla bulunur | `bot_base.py` |
 | **Alchemy / Harmony** | Bkz. Harmony |
 | **+ (Plus) basma** | Bir eşyayı +1, +2, ... seviyeye yükseltme | `PlusModeBot`, `mode="plus"` |
 | **Harmony basma** | Aynı eşyaya tekrar basma / yeniden harmoni | `StatModeBot`, `mode="stat"` |
@@ -24,13 +24,13 @@
 | **ROI** (Region of Interest) | Log'un okunacağı ekran dikdörtgeni `(x, y, w, h)` |
 | **Iteration** | Bir basma turu: tıkla → bekle → yakala → OCR → karar |
 | **Fuse click** | `fuse_button` koordinatına yapılan Win32 tıklaması |
-| **Animation delay** | Tıklamadan sonra oyun animasyonu + log oluşması için bekleme |
+| **Animation delay** | Tıklamadan sonra log yoklamaya başlamadan önceki **asgari** bekleme; asıl bekleme yeni sonuç satırı gelene kadar sürer |
 | **Click delay** | İki tur arası bekleme |
 | **Consecutive failures** | Üst üste gelen başarısız basma sayısı |
 | **`ParseResult`** | OCR'ın çıktısını taşıyan veri sınıfı (`success`, `result_type`, `value`, `raw_text`, `error`) |
 | **`result_type`** | `"plus"` \| `"stat"` \| `"failed"` \| `"unknown"` |
 | **PSM** | Tesseract Page Segmentation Mode (`tesseract_psm`, varsayılan `6`) |
-| **Otsu threshold** | OpenCV'nin otomatik eşik yöntemi |
+| **Otsu threshold** | OpenCV'nin otomatik eşik yöntemi; bitmap log fontunda yanlış okumaya yol açtığı için **kullanılmıyor** |
 | **Whitelist** | Tesseract'a izin verilen karakter kümesi |
 | **Bot state** | `IDLE`/`RUNNING`/`PAUSED`/`STOPPED`/`COMPLETED`/`FAILED` |
 | **Stop reason** | Botun neden durduğu (`TARGET_REACHED`/`CRITICAL_FAILURE`/`USER_STOPPED`/`ERROR`) |
@@ -39,7 +39,7 @@
 | **Daemon thread** | Ana program çıkınca otomatik sonlanan arka iş parçacığı |
 | **Marshal (thread)** | UI güncellemesini `root.after(0, ...)` ile ana thread'e taşımak |
 | **pywin32** | `win32api`/`win32con`; tıklama + pencere kontrolü için birincil backend (ADR-0006) |
-| **pygetwindow** | Pencereyi `restore()`/`activate()` ile öne getiren yardımcı kütüphane |
+| **Macro_Client.exe** | Desteklenen tek oyun istemcisi (`E:\Games\Oasis 2005 MACRO`); yönetici olarak çalışır |
 | **TESSERACT_CMD** | `tesseract.exe` yolunu elle belirten ortam değişkeni |
 | **SendInput** | Fare/klavye olayını Raw Input kuyruğuna yazan Win32 API'si; `mouse_event`'ten farklı olarak oyunlara ulaşır (ADR-0007) |
 | **Raw Input / DirectInput** | Oyunların girdiyi üst düzey mesaj kuyruğundan önce okuduğu katman |
@@ -52,9 +52,8 @@
 | `+7` | plus | `PLUS_PATTERN` → `value=7` |
 | `Upgrade failed` | plus/stat | `FAILED_PATTERN` → `result_type="failed"` |
 | `[12.2->12.4]` | stat | `STAT_SIMPLE_PATTERN` → `{old_value,new_value,improved}` |
-| `[(82.9%~98.6%) -> (81.6%~97.1%)]` | stat | `STAT_RANGE_PATTERN` → `{old_range,new_range,old_avg,new_avg,improved}` |
-| `been changed to(297->301]` | stat | `STAT_CHANGEDTO_PATTERN` (SRO'ya özgü) |
-| `(297->301]` | stat | `STAT_PARENS_PATTERN` |
+| `[(538 ~ 630) -> (551 ~ 646)]` | stat | `STAT_RANGE_PATTERN` → `{old_range,new_range,old_avg,new_avg,new_max,improved}`; hedef **yeni aralığın üst sınırı** (646) ile karşılaştırılır |
+| `(297->301]` | stat | `STAT_SIMPLE_PATTERN` |
 
 > OCR bu metinleri **bozuk** üretebilir (`-` yerine `~`, eksik boşluk, fazladal şapka).
 > Desenler bu varyasyonlara dayanıklı olacak şekilde yazıldı. Ham metni

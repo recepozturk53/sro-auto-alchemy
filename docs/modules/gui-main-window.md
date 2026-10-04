@@ -47,7 +47,7 @@ belirler (`pack_forget()` / `pack()`).
 En değerli hata ayıklama aracı:
 
 1. ROI genişliği/yüksekliği 0 ise uyarı ver, çık.
-2. `screen_capture.capture_region(*log_roi)`
+2. Oyun penceresini öne getir (`_stat_bot._bring_window_to_front()`) + 0.4 sn, `screen_capture.capture_region(*log_roi)`, sonra GUI'yi geri öne al. (Eskiden GUI log alanını örtüyordu ve görüntü bot penceresinin kendisiydi.)
 3. `cv2.imwrite("debug_log_region.png", log_image)` — **çalışma dizinine** yazar.
 4. `ocr_processor.process_log_region(img, mode=self._current_mode, threshold=..., psm=...)`
 5. Log kutusuna `raw_text`, `result_type`, `value`/`error` yazar.
@@ -64,9 +64,10 @@ En değerli hata ayıklama aracı:
 
 ## Dikkat
 
-- **Tk main thread kuralı.** `_on_status_change` ve `_on_log` **bot thread'inden**
-  tetiklenir ve doğrudan widget güncellemesi yapar — bu thread-unsafe'dir.
-  Yeni UI güncellemesi eklerken `self.root.after(0, lambda: ...)` ile marshal et.
+- **Tk main thread kuralı.** Bot callback'leri **bot thread'inden** gelir; yalnızca
+  `_post_ui(func, *args)` ile `_ui_queue`'ya konur, ana thread `_drain_ui_queue`
+  ile her `UI_POLL_MS` (50 ms) uygular. Doğrudan widget çağrısı ya da bot
+  thread'inden `root.after` `stop()`→`join()` sırasında kilitlenir (gotcha §2).
   Bkz. [gotchas.md](../gotchas.md).
 - Yeni girdi alanı eklerken `_start_bot`'ta `int()`/`float()` parse **ve**
   `ValueError` yakalama unutulmamalı; ayrıca `configure()`'a parametre geçmelidir.

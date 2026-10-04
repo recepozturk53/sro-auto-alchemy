@@ -24,12 +24,13 @@ OCR'ın stat sonucu **polimorfiktir** (bkz. [core-ocr.md](core-ocr.md)). Bu meto
 tek noktada normalleştirir:
 
 ```python
-if 'new_avg' in value_data:     return value_data['new_avg']   # yüzdeli aralık
-if 'new_value' in value_data:   return value_data['new_value']  # basit değer
+if 'new_range' in value_data:   return value_data['new_range'][1]  # aralık: ÜST sınır
+if 'new_value' in value_data:   return value_data['new_value']     # basit değer
 return 0.0
 ```
 
-- `new_avg` = `(new_min + new_max) / 2`; yüzdeli aralık loglarında kullanılır.
+- Aralık logunda `[(538 ~ 630) -> (551 ~ 646)]` hedef **yeni aralığın üst sınırıyla**
+  (646) karşılaştırılır — kullanıcının istediği bu (2026-10-04).
 - **Yeni bir stat desen ekliyorsan** sonucu bu iki anahtardan birine normalize et,
   yoksa `_extract_stat_value` `0.0` döner ve hedefe asla ulaşılamaz.
 - `get_worst_stat()` `inf` durumunu `0.0` olarak maskeler (arayüz `inf` göstermesin diye).
@@ -63,6 +64,8 @@ Durum mesajı best değerini de içerir:
 - Stat modunda `log_roi` değişkeni `_run_loop` içinde atanır ama kullanılmaz
   (yalnızca `_perform_iteration` okur) — ölü atama, davranışsal etkisi yok.
 - `_worst_stat` `inf` ile başlar; `get_worst_stat()` bunu maskeler.
-- Eşik karşılaştırması **ortalama** değere göredir (aralık varsa `new_avg`),
-  tek bir yüzdeye göre değil. Bu bilinçli bir karardır: aralık loglarında
-  hangi sayının "hedef" olduğu oyuna göre değişir. Bkz. [adr/](../adr/).
+- Eşik karşılaştırması aralık varsa **yeni üst sınıra** göredir (`new_range[1]`),
+  ortalamaya göre değil.
+- Sonuç ancak `BotBase._confirm_result` onaylarsa gelir: önceki sonuca zincirlenme
+  (yeni logun `old_range`'i = öncekinin `new_range`'i) ya da birden çok OCR geçişinin
+  uyuşması gerekir.

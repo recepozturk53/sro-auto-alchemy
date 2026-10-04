@@ -1,6 +1,6 @@
 # ADR-0006: Girdi Backend'i pywin32 + pygetwindow
 
-**Durum:** Superseded by ADR-0007 (tıklama yolu) — pencere aktivasyonu (pygetwindow) hâlâ geçerli
+**Durum:** Superseded by ADR-0007 (tıklama yolu) ve ADR-0008 (pencere aktivasyonu; pygetwindow kaldırıldı)
 **Tarih:** 2026-10-02
 
 ## Bağlam

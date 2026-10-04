@@ -16,8 +16,9 @@ geliştirme ve düşük bağımlılık için bu yapı yeterlidir.
 Makine öğrenmesi **kullanılmaz**. Pipeline:
 
 ```
-BGR → gri tonlama → GaussianBlur → Otsu threshold → MORPH_CLOSE
+BGR → gri tonlama → sabit threshold → invert → x2 INTER_NEAREST büyütme
     → Tesseract (psm 6, oem 3, dar karakter whitelist'i)
+(2026-10-04: Otsu/blur/morph kaldırıldı — bitmap fontu bozuyordu, bkz. gotcha §18)
     → katı regex ayrıştırma → ParseResult
 ```
 

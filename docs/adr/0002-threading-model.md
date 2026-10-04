@@ -27,8 +27,9 @@ bekleme + OCR nedeniyle **bloklayıcıdır**; main loop'ta çalışsa arayüz do
 - Yeni mod, mevcut GUI'ye otomatik bağlanır (aynı callback sözleşmesi).
 
 **Eksiler / borç**
-- **Tk thread-güvenliği ihlali:** `_on_status_change` doğrudan `widget.configure(...)`
-  çağırır. `root.after(0, ...)` ile marshal edilmelidir — bkz. `docs/gotchas.md` #2.
+- **Tk thread-güvenliği:** (2026-10-04 çözüldü) bot callback'leri `queue.Queue`'ya
+  yazar, ana thread 50 ms'de bir boşaltır (`MainWindow._post_ui` /
+  `_drain_ui_queue`) — bkz. `docs/gotchas.md` #2.
   Pratikte çoğu zaman çalışır, ancak nadir ani çökme riski taşır.
 - `stop()` uzun `animation_delay` sırasında zaman aşımına uğrayabilir
   (`join(timeout=2.0)`); bot ancak iterasyon sonunda durur.

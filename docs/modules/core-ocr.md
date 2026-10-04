@@ -13,7 +13,7 @@ Bu modül **tek OCR kapısıdır**: botlar doğrudan Tesseract çağırmaz, her 
 | Adım | Metot | Ne yapar |
 |---|---|---|
 | 0 | `locate_tesseract` (import anında) | `PATH` → yaygın kurulum dizinleri → `TESSERACT_CMD`; `get_tesseract_version()` ile doğrular |
-| 1 | `preprocess_image` | `cvtColor(BGR2GRAY)` → `resize(3x)` (h<200, 2x h<400) → `GaussianBlur(3,3)` → `threshold(THRESH_BINARY + THRESH_OTSU)` → **invert** (mean<127) → `MORPH_OPEN` → `MORPH_CLOSE` → 15 px beyaz kenarlık |
+| 1 | `preprocess_image(image, threshold, scale=2)` | `cvtColor(BGR2GRAY)` → **sabit** `threshold` → **invert** (mean<127) → `resize(scale, INTER_NEAREST)` → 20 px beyaz kenarlık |
 | 2 | `extract_text` | Tesseract yoksa boş string döner; varsa `pytesseract.image_to_string(..., --psm N --oem 3 -c tessedit_char_whitelist=...)` |
 | 3 | `parse_*_result` | Saf metin → `ParseResult` (regex) |
 
@@ -42,11 +42,11 @@ Stat dict şekilleri **polimorfiktir** — bu, `bot_stat._extract_stat_value`'ı
 nedenidir:
 
 ```python
-# RANGE deseni (yüzdeli aralık)
-{'old_range': (82.9, 98.6), 'new_range': (81.6, 97.1),
- 'old_avg': 90.75, 'new_avg': 89.35, 'improved': False}
+# RANGE deseni: [(538 ~ 630) -> (551 ~ 646)]  (yüzdeli de olabilir)
+{'old_range': (538.0, 630.0), 'new_range': (551.0, 646.0),
+ 'old_avg': 584.0, 'new_avg': 598.5, 'new_max': 646.0, 'improved': True}
 
-# SIMPLE / PARENS / CHANGEDTO / ARROW desenleri
+# SIMPLE / ARROW desenleri: [12.2->12.4], (297->301]
 {'old_value': 297.0, 'new_value': 301.0, 'improved': True}
 ```
 
@@ -65,13 +65,23 @@ nedenidir:
 
 `parse_stat_result` (satır ~191):
 
-1. `STAT_CHANGEDTO_PATTERN` (SRO'ya özgü "been changed to")
-2. `STAT_PARENS_PATTERN` `(297->301]`
-3. `STAT_RANGE_PATTERN` `[(82.9%~98.6%) -> (81.6%~97.1%)]`
-4. `STAT_SIMPLE_PATTERN` `[12.2->12.4]`
-5. `STAT_ARROW_PATTERN` (genel `N->N`)
-6. `FAILED_PATTERN` → `"failed"`
-7. `"unknown"`
+Her desen için **son** (en yeni) eşleşme alınır. Köşeli/normal parantezler OCR'da
+sık bozulduğu (`(`→`f`, `]`→`j`/`)`) için isteğe bağlıdır; `->` oku zorunludur.
+
+1. `STAT_RANGE_PATTERN` `[(538 ~ 630) -> (551 ~ 646)]`, `[(82.9%~98.6%) -> (81.6%~97.1%)]`
+   — yalnızca `_plausible_range` geçen eşleşmeler (her iki tarafta min ≤ max, sınır
+   başına değişim 0.5x–2x). Aralık önce gelir: aksi halde sayıları `N->N` sanılır.
+2. `STAT_SIMPLE_PATTERN` `[12.2->12.4]` / `(297->301]`
+3. `STAT_ARROW_PATTERN` (çıplak `N->N`) — yalnızca metinde `chang` geçiyorsa
+4. `FAILED_PATTERN` → `"failed"`
+5. `"unknown"`
+
+`stat_events(text)`: aynı desenlerle metindeki **tüm** sonuçları sırayla döner (aralık,
+tek değer ve `ALCHEMY_FAILED_PATTERN` — sadece "alchemy/enhancement ... fail"). Bot yeni
+sonucu, yeni satır şeridinde (`BotBase._new_line_strip`) bu listeyi okuyarak bulur (gotcha §20).
+
+`crop_scrollbar(image)`: log alanının sağındaki kaydırma çubuğunu (sağ %15'te, yüksekliğinin
+≥%60'ı parlak olan sütun) keser; `preprocess_image` her görüntüde uygular.
 
 ## Nereye dokunulur
 
@@ -96,11 +106,13 @@ nedenidir:
 - `preprocess_image` çıktısı **koyu yazı / açık zemin** olmalıdır: oyun log'u
   açık-yazı/koyu-zemin olduğu için görüntü ortalama < 127 ise otomatik ters
   çevrilir. Bu adım kaldırılırsa Tesseract doğruluğu ciddi biçimde düşer.
-- `MORPH_OPEN` log panelindeki **kaydırma çubuğu ve benek gürültüsünü** atar;
-  kaldırılırsa `Van oe (Y]` gibi sahte satırlar `raw_text`'e girer.
-- 15 px beyaz kenarlık Tesseract'ın satır/karakter segmentasyonunu iyileştirir.
-- `threshold` parametresi yalnızca **yedektir**; `THRESH_OTSU` aktifken OpenCV onu
-  yok sayar.
+- **Oyun log'u 1 px bitmap fonttur** (yazı pikselleri tam 201, kenar yumuşatma
+  yok). Önce eşikle, sonra `INTER_NEAREST` ile büyüt. Blur / cubic / Otsu /
+  `MORPH_OPEN` ince çizgileri bozar: `538`→`638`, `551`→`651`, `]`→`j` (gotcha §18).
+- Ölçüm (gerçek log görüntüsü): x2 eşik 120–180 her rakamı doğru okur; x3 `646]`'i
+  `6463`, x4 `538`'i `638` okur. Varsayılan `DEFAULT_OCR_SCALE = 2`.
+- 20 px beyaz kenarlık Tesseract'ın satır/karakter segmentasyonunu iyileştirir.
+- `threshold` (config `ocr_threshold`, 150) sabit eşiktir; 90–180 arası çalışır.
 - Tesseract konumu import anında çözülür (`locate_tesseract`); kullanıcı motoru
   sonradan kurarsa `extract_text` ilk çağrıda bir kez daha arar — uygulamayı
   yeniden başlatmak gerekmez.

@@ -22,7 +22,7 @@ Konum: `%APPDATA%\SroAutoAlchemy\config.json` (`_get_config_path`, satır ~72).
 | `target_plus` | `int` | `10` | Hedef + seviyesi |
 | `current_plus` | `int` | `0` | Son okunan + seviyesi |
 | `target_stat_threshold` | `float` | `100.0` | Hedef stat eşiği |
-| `animation_delay` | `int` | `2500` | Tıklamadan sonra beklenecek süre (ms) |
+| `animation_delay` | `int` | `2500` | Tıklamadan sonra log yoklamaya başlamadan önceki asgari bekleme (ms) |
 | `click_delay` | `int` | `500` | İki tıklama arası bekleme (ms) |
 | `sound_enabled` | `bool` | `True` | Alarm sesi açık mı |
 | `ocr_threshold` | `int` | `150` | OpenCV eşik değeri |

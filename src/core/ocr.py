@@ -14,6 +14,18 @@ from dataclasses import dataclass
 from PIL import Image
 import threading
 
+# Nearest-neighbour upscale factor for the 1-px bitmap log font. Measured on
+# the game log: x2 reads every digit/bracket correctly at thresholds 120..180;
+# x3 reads "646]" as "6463", x4 reads "538" as "638".
+DEFAULT_OCR_SCALE = 2
+
+# Scrollbar detection (crop_scrollbar): search the right 15% of the log area
+# for a column whose pixels are bright over >= 60% of its height (the bar's
+# border), and cut a few pixels left of it.
+SCROLLBAR_SEARCH_FRACTION = 0.15
+SCROLLBAR_MIN_COLUMN_FILL = 0.6
+SCROLLBAR_MARGIN_PX = 6
+
 
 def _tesseract_path_candidates() -> Tuple[str, ...]:
     """
@@ -101,16 +113,27 @@ class OCRProcessor:
     FAILED_PATTERN = re.compile(r'failed|fail|error|unsuccessful', re.IGNORECASE)
     SUCCESS_PATTERN = re.compile(r'success|succeeded', re.IGNORECASE)
     
-    # Stat patterns: [12.2->12.4] or [(82.9%~98.6%) -> (81.6%~97.1%)]
-    # Also handles variations with spaces and different brackets
-    STAT_SIMPLE_PATTERN = re.compile(r'\[\s*([\d.]+)\s*[-~>]+\s*([\d.]+)\s*\]', re.IGNORECASE)
-    STAT_RANGE_PATTERN = re.compile(r'\[\s*\(?\s*([\d.]+)\s*%?\s*~\s*([\d.]+)\s*%?\s*\)?\s*[-~>]+\s*\(?\s*([\d.]+)\s*%?\s*~\s*([\d.]+)\s*%?\s*\)?\s*\]', re.IGNORECASE)
-    STAT_ARROW_PATTERN = re.compile(r'([\d.]+)\s*->\s*([\d.]+)', re.IGNORECASE)
-    
-    # SRO specific patterns: "beenchangedto(297->301]" or similar
-    STAT_CHANGEDTO_PATTERN = re.compile(r'changedto\s*\(?[\s]*(\d+)\s*[-~>]+\s*(\d+)', re.IGNORECASE)
-    STAT_PARENS_PATTERN = re.compile(r'\(\s*(\d+)\s*[-~>]+\s*(\d+)\s*\]', re.IGNORECASE)
-    
+    # Stat patterns (OCR-tolerant: brackets are often misread as ( ) { } j f,
+    # so they are optional; the "->" arrow is required). Examples:
+    #   ...changed to [(549 ~ 644) -> (538 ~ 630)]      (range)
+    #   ...changed to [(82.9%~98.6%) -> (81.6%~97.1%)]  (percent range)
+    #   ...changed to [12.2->12.4]  /  (297->301]         (single value)
+    _NUM = r'(\d+(?:\.\d+)?)'
+    _ARROW = r'\s*-+\s*>\s*'
+    _RANGE = _NUM + r'\s*%?\s*[~-]\s*' + _NUM + r'\s*%?'
+    STAT_RANGE_PATTERN = re.compile(
+        _RANGE + r'\s*[)\]}jJ|]?' + _ARROW + r'[(\[{fF]?\s*' + _RANGE
+    )
+    STAT_SIMPLE_PATTERN = re.compile(r'[\[(]\s*' + _NUM + _ARROW + _NUM)
+    # Bare "N->N" only counts when the text looks like a stat change message
+    STAT_ARROW_PATTERN = re.compile(_NUM + _ARROW + _NUM)
+    STAT_MESSAGE_HINT = re.compile(r'chang', re.IGNORECASE)
+    # "The alchemy enhancement has failed." - tied to alchemy wording so a chat
+    # line containing "fail" is not mistaken for a fuse result
+    ALCHEMY_FAILED_PATTERN = re.compile(
+        r'(?:alch|enhanc)[^\n]*?fail', re.IGNORECASE
+    )
+
     def __new__(cls):
         if cls._instance is None:
             with cls._lock:
@@ -134,69 +157,89 @@ class OCRProcessor:
         """Human-readable Tesseract status (version string or error message)."""
         return self._tesseract_detail
     
-    def preprocess_image(self, image: np.ndarray, threshold: int = 150) -> np.ndarray:
+    @staticmethod
+    def crop_scrollbar(image: np.ndarray, threshold: int = 150) -> np.ndarray:
         """
-        Preprocess image for OCR using OpenCV thresholding.
-        
+        Cut the log panel's scrollbar off the right edge of a capture.
+
+        The selected log area usually includes the scrollbar, which Tesseract
+        reads as junk at line ends ("- 4 [a Ta"); one such "4" landed inside
+        a wrapped range ("(139.9 % ~ 4 / 171.0 %)") and broke it. The bar has
+        a bright vertical border; no text column is that bright that tall.
+
+        Args:
+            image: BGR capture of the log area
+            threshold: Gray level counted as bright
+
+        Returns:
+            The capture without the scrollbar (unchanged when none is found)
+        """
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        width = gray.shape[1]
+        start = int(width * (1 - SCROLLBAR_SEARCH_FRACTION))
+        bright = (gray[:, start:] > threshold).mean(axis=0)
+        columns = np.nonzero(bright >= SCROLLBAR_MIN_COLUMN_FILL)[0]
+        if columns.size == 0:
+            return image
+        cut = max(start + int(columns[0]) - SCROLLBAR_MARGIN_PX, 1)
+        return image[:, :cut]
+
+    def preprocess_image(
+        self, image: np.ndarray, threshold: int = 150, scale: int = DEFAULT_OCR_SCALE
+    ) -> np.ndarray:
+        """
+        Preprocess image for OCR.
+
+        SRO draws its log with a 1-px bitmap font (no anti-aliasing) over a
+        dark, semi-transparent panel. So the crop is binarized FIRST with a
+        fixed threshold and only then upscaled with nearest-neighbour, which
+        keeps the glyphs crisp. Blur / cubic upscaling / Otsu smear the 1-px
+        strokes and make Tesseract read 5 as 6 and ] as j.
+
         Args:
             image: BGR numpy array
-            threshold: Fallback threshold value (ignored while Otsu is active)
-            
+            threshold: Gray level separating text from background (90..150 all
+                work on the game log)
+            scale: Integer nearest-neighbour upscale factor
+
         Returns:
-            Preprocessed grayscale image
+            Preprocessed image: black text on white
         """
         with self._ocr_lock:
-            # Convert to grayscale
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+            gray = cv2.cvtColor(self.crop_scrollbar(image), cv2.COLOR_BGR2GRAY)
+            _, mask = cv2.threshold(gray, threshold, 255, cv2.THRESH_BINARY)
 
-            # Upscale small crops: Tesseract recognises glyphs much better when
-            # they are not tiny.
-            height = gray.shape[0]
-            scale = 3.0 if height < 200 else (2.0 if height < 400 else 1.0)
-            if scale != 1.0:
-                gray = cv2.resize(
-                    gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC
-                )
-            
-            # Apply Gaussian blur to reduce noise
-            blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-            
-            # Binarize with Otsu's method. The fixed threshold value is only a
-            # fallback: OpenCV ignores it while THRESH_OTSU is active.
-            _, thresh = cv2.threshold(
-                blurred, 
-                threshold, 
-                255, 
-                cv2.THRESH_BINARY + cv2.THRESH_OTSU
-            )
-            
             # Game logs are light text on a dark background, but Tesseract
             # expects dark text on a light background - invert when needed.
-            if float(np.mean(thresh)) < 127.0:
-                thresh = cv2.bitwise_not(thresh)
+            if float(np.mean(mask)) < 127.0:
+                mask = cv2.bitwise_not(mask)
 
-            # OPEN drops speckle noise (log scrollbar, panel edges) before CLOSE
-            # re-joins strokes that binarization broke apart.
-            kernel = np.ones((2, 2), np.uint8)
-            cleaned = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
-            cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_CLOSE, kernel)
+            if scale > 1:
+                mask = cv2.resize(
+                    mask, None, fx=scale, fy=scale, interpolation=cv2.INTER_NEAREST
+                )
 
             # Tesseract reads more reliably with a clean white margin.
-            cleaned = cv2.copyMakeBorder(
-                cleaned, 15, 15, 15, 15, cv2.BORDER_CONSTANT, value=255
+            return cv2.copyMakeBorder(
+                mask, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255
             )
-            
-            return cleaned
     
-    def extract_text(self, image: np.ndarray, psm: int = 6, threshold: int = 150) -> str:
+    def extract_text(
+        self,
+        image: np.ndarray,
+        psm: int = 6,
+        threshold: int = 150,
+        scale: int = DEFAULT_OCR_SCALE,
+    ) -> str:
         """
         Extract text from image using Tesseract OCR.
-        
+
         Args:
             image: BGR numpy array
             psm: Tesseract page segmentation mode (default 6)
             threshold: Threshold for preprocessing
-            
+            scale: Nearest-neighbour upscale factor (see preprocess_image)
+
         Returns:
             Extracted text string
         """
@@ -214,7 +257,7 @@ class OCRProcessor:
 
             try:
                 # Preprocess the image
-                processed = self.preprocess_image(image, threshold)
+                processed = self.preprocess_image(image, threshold, scale)
                 
                 # Configure Tesseract
                 config = f'--psm {psm} --oem 3 -c tessedit_char_whitelist=0123456789+-.>%~[]()abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ '
@@ -293,133 +336,139 @@ class OCRProcessor:
                 error="Could not parse plus result"
             )
     
+    @staticmethod
+    def _plausible_range(
+        old_min: float, old_max: float, new_min: float, new_max: float
+    ) -> bool:
+        """
+        Reject range readings that cannot be real.
+
+        min <= max must hold on both sides, and a fuse never moves a bound by
+        more than 2x. Typical OCR slips fail this: 5->6 gives "638 ~ 630",
+        a "]" read as "3" gives "551 ~ 6463".
+        """
+        if old_min > old_max or new_min > new_max:
+            return False
+        for old, new in ((old_min, new_min), (old_max, new_max)):
+            if old > 0 and not 0.5 <= new / old <= 2.0:
+                return False
+        return True
+
+    def stat_events(self, text: str) -> List[ParseResult]:
+        """
+        Every stat fuse result in the log text, oldest first.
+
+        A result often wraps over 2-3 lines ("...changed to [(126.5 % ~ 155.1"
+        / "%)]."), so comparing lines cannot tell an old result from a new
+        one. Comparing the parsed results can: the log scrolls, so the events
+        after a fuse are the old ones (minus some at the top) plus the new one.
+
+        Args:
+            text: OCR extracted text
+
+        Returns:
+            "stat" results (range or single value) and "failed" results, in
+            the order they appear
+        """
+        with self._ocr_lock:
+            found: List[Tuple[int, ParseResult]] = []
+            taken: List[Tuple[int, int]] = []
+
+            for match in self.STAT_RANGE_PATTERN.finditer(text):
+                values = tuple(float(v) for v in match.groups())
+                if not self._plausible_range(*values):
+                    continue
+                taken.append(match.span())
+                found.append((match.start(), self.parse_stat_result(match.group(0))))
+
+            def free(span: Tuple[int, int]) -> bool:
+                return all(span[1] <= a or span[0] >= b for a, b in taken)
+
+            singles = list(self.STAT_SIMPLE_PATTERN.finditer(text))
+            if self.STAT_MESSAGE_HINT.search(text):
+                singles += list(self.STAT_ARROW_PATTERN.finditer(text))
+            for match in singles:
+                if not free(match.span()):
+                    continue
+                taken.append(match.span())
+                old_value, new_value = (float(v) for v in match.groups())
+                found.append((match.start(), ParseResult(
+                    success=True,
+                    result_type="stat",
+                    value={
+                        'old_value': old_value,
+                        'new_value': new_value,
+                        'improved': new_value > old_value
+                    },
+                    raw_text=match.group(0)
+                )))
+
+            for match in self.ALCHEMY_FAILED_PATTERN.finditer(text):
+                found.append((match.start(), ParseResult(
+                    success=True, result_type="failed", raw_text=match.group(0)
+                )))
+
+            return [result for _, result in sorted(found, key=lambda item: item[0])]
+
     def parse_stat_result(self, text: str) -> ParseResult:
         """
         Parse stat upgrade result from log text.
-        Handles formats:
-        - [12.2->12.4]
+
+        Handles (newest = LAST match in the text wins):
+        - [(549 ~ 644) -> (538 ~ 630)]   -> new_range / new_max / new_avg
         - [(82.9%~98.6%) -> (81.6%~97.1%)]
-        - beenchangedto(297->301]
-        - Any text with number->number pattern
-        
+        - [12.2->12.4] or (297->301]     -> new_value
+
         Args:
             text: OCR extracted text
-            
+
         Returns:
             ParseResult with stat values
         """
         with self._ocr_lock:
-            # Try SRO specific "changedto" pattern first
-            changedto_match = self.STAT_CHANGEDTO_PATTERN.search(text)
-            if changedto_match:
-                try:
-                    old_value = float(changedto_match.group(1))
-                    new_value = float(changedto_match.group(2))
-                    
-                    return ParseResult(
-                        success=True,
-                        result_type="stat",
-                        value={
-                            'old_value': old_value,
-                            'new_value': new_value,
-                            'improved': new_value > old_value
-                        },
-                        raw_text=text
-                    )
-                except (ValueError, IndexError):
-                    pass
-            
-            # Try parens pattern: (297->301]
-            parens_match = self.STAT_PARENS_PATTERN.search(text)
-            if parens_match:
-                try:
-                    old_value = float(parens_match.group(1))
-                    new_value = float(parens_match.group(2))
-                    
-                    return ParseResult(
-                        success=True,
-                        result_type="stat",
-                        value={
-                            'old_value': old_value,
-                            'new_value': new_value,
-                            'improved': new_value > old_value
-                        },
-                        raw_text=text
-                    )
-                except (ValueError, IndexError):
-                    pass
-            
-            # Try range pattern: [(82.9%~98.6%) -> (81.6%~97.1%)]
-            range_match = self.STAT_RANGE_PATTERN.search(text)
-            if range_match:
-                groups = range_match.groups()
-                try:
-                    old_min = float(groups[0])
-                    old_max = float(groups[1])
-                    new_min = float(groups[2])
-                    new_max = float(groups[3])
-                    
-                    # Calculate average values for comparison
-                    old_avg = (old_min + old_max) / 2
-                    new_avg = (new_min + new_max) / 2
-                    
-                    return ParseResult(
-                        success=True,
-                        result_type="stat",
-                        value={
-                            'old_range': (old_min, old_max),
-                            'new_range': (new_min, new_max),
-                            'old_avg': old_avg,
-                            'new_avg': new_avg,
-                            'improved': new_avg > old_avg
-                        },
-                        raw_text=text
-                    )
-                except (ValueError, IndexError):
-                    pass
-            
-            # Try simple pattern: [12.2->12.4]
-            simple_match = self.STAT_SIMPLE_PATTERN.search(text)
-            if simple_match:
-                try:
-                    old_value = float(simple_match.group(1))
-                    new_value = float(simple_match.group(2))
-                    
-                    return ParseResult(
-                        success=True,
-                        result_type="stat",
-                        value={
-                            'old_value': old_value,
-                            'new_value': new_value,
-                            'improved': new_value > old_value
-                        },
-                        raw_text=text
-                    )
-                except ValueError:
-                    pass
-            
-            # Try generic arrow pattern: number->number
-            arrow_matches = self.STAT_ARROW_PATTERN.findall(text)
-            if arrow_matches:
-                try:
-                    # Use the last match (most recent)
-                    old_val, new_val = arrow_matches[-1]
-                    old_value = float(old_val)
-                    new_value = float(new_val)
-                    
-                    return ParseResult(
-                        success=True,
-                        result_type="stat",
-                        value={
-                            'old_value': old_value,
-                            'new_value': new_value,
-                            'improved': new_value > old_value
-                        },
-                        raw_text=text
-                    )
-                except (ValueError, IndexError):
-                    pass
-            
+            # Ranges first: their numbers would otherwise be read as N->N.
+            # Newest plausible match wins; misreads usually break plausibility.
+            ranges = [
+                values for values in (
+                    tuple(float(v) for v in match.groups())
+                    for match in self.STAT_RANGE_PATTERN.finditer(text)
+                )
+                if self._plausible_range(*values)
+            ]
+            if ranges:
+                old_min, old_max, new_min, new_max = ranges[-1]
+                old_avg = (old_min + old_max) / 2
+                new_avg = (new_min + new_max) / 2
+                return ParseResult(
+                    success=True,
+                    result_type="stat",
+                    value={
+                        'old_range': (old_min, old_max),
+                        'new_range': (new_min, new_max),
+                        'old_avg': old_avg,
+                        'new_avg': new_avg,
+                        'new_max': new_max,
+                        'improved': new_max > old_max
+                    },
+                    raw_text=text
+                )
+
+            singles = list(self.STAT_SIMPLE_PATTERN.finditer(text))
+            if not singles and self.STAT_MESSAGE_HINT.search(text):
+                singles = list(self.STAT_ARROW_PATTERN.finditer(text))
+            if singles:
+                old_value, new_value = (float(v) for v in singles[-1].groups())
+                return ParseResult(
+                    success=True,
+                    result_type="stat",
+                    value={
+                        'old_value': old_value,
+                        'new_value': new_value,
+                        'improved': new_value > old_value
+                    },
+                    raw_text=text
+                )
+
             # Check for failure
             if self.FAILED_PATTERN.search(text):
                 return ParseResult(

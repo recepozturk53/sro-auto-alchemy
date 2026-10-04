@@ -35,8 +35,9 @@ Varsayılan `BotConfig(...)` gösterilmeli. `config.json` okunamıyorsa konsola
 python list_windows.py
 ```
 
-"SRO windows" bölümünde `SRO_Client` (veya varyantı) görünmeli. Görünmüyorsa
-`bot_base._window_title_candidates` listesine pencerenin gerçek başlığını ekle.
+Oyun penceresi `Macro_Client.exe` sürecine ait, sınıfı `MaxiGuard` olmalı
+(başlık girişten sonra `[<karakter>] Oasis 2005` olur). Bulunamıyorsa
+`bot_base.GAME_PROCESS_NAME` / `GAME_WINDOW_CLASS` sabitlerini kontrol et.
 
 ## Katman 3.5 — Tıklama teşhisi (oyun açıkken, **yönetici**)
 
@@ -76,6 +77,11 @@ Uygulamayı başlat: `python main.py`
 
 Ayrıca `debug_log_region.png` çalışma dizinine düşer: seçilen alanın gerçekten
 doğru olduğunu görselle doğrula.
+
+Bot çalışırken her tıklamadan önce `Log area before click: ...` satırı alanda
+okunan metni gösterir (`<empty>` → alan yanlış/örtülü). Sonuç okunamayıp bot
+durursa `logs/fuse_before.png`, `fuse_after.png` (ham) ve `*_ocr.png` (Tesseract'a
+giden siyah-beyaz görüntü) kaydedilir.
 
 ## Katman 5 — Entegrasyon: bot turu (oyun açıkken)
 

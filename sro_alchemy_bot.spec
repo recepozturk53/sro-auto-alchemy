@@ -39,8 +39,6 @@ a = Analysis(
         'win32api',
         'win32con',
         'win32gui',
-        'pygetwindow',
-        'pyrect',
     ],
     hookspath=[],
     hooksconfig={},

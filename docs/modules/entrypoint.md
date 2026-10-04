@@ -4,9 +4,13 @@
 
 ## Ne yapar
 
-Projenin tek çalıştırma giriş noktası. Dört adım:
+Projenin tek çalıştırma giriş noktası. Beş adım:
 
 1. `sys.path.insert(0, str(Path(__file__).parent))` → `src` paketinin çözülebilmesi için.
+1. Yönetici değilse `relaunch_elevated()` → `ShellExecuteW("runas")` ile kendini UAC
+   üzerinden yeni pencerede yeniden başlatır ve çıkar (SRO_Client yükseltilmiş çalışır;
+   bkz. [gotchas §13](../gotchas.md)). UAC reddedilirse ya da `--no-elevate` verilirse
+   uyarı basıp normal yetkiyle devam eder. PyInstaller derlemesinde (`sys.frozen`) exe'nin kendisi yeniden başlatılır.
 2. `setup_logging()` → `logs/bot.log` + konsol çıktısı (`INFO`, `%(asctime)s - %(name)s - %(levelname)s - %(message)s`).
 3. `check_dependencies()` → `customtkinter`, `mss`, `pytesseract`, `cv2`, `PIL`; sonra `pytesseract.get_tesseract_version()` ile Tesseract kontrolü.
 4. `MainWindow()` örneği + `app.run()` → Tk `mainloop()`.

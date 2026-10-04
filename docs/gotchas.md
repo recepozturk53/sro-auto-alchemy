@@ -21,8 +21,14 @@ callback'ler bot thread'inde çalışır. `MainWindow._on_status_change` ise do�
 çoğu zaman çalışır ama ani çökme (`Tcl_AsyncUpdate: fatal error`) veya donma
 olasılığı vardır. Hata seyrek olduğu için teşhisi zordur.
 
-**Savunma:** Bot callback'lerinden gelen her UI güncellemesini
-`self.root.after(0, ...)` ile main thread'e taşı. Yeni callback eklerken bu kurala uy.
+Gerçek belirti (2026-10-04): "Durdur" → `stop()` ana thread'de `join()` beklerken
+bot thread'i `configure()` içinde ana thread'i bekledi → karşılıklı kilit.
+Bot thread'inden `root.after(...)` çağırmak da Tk çağrısıdır, aynı riski taşır.
+
+**Savunma (uygulandı):** Bot callback'leri yalnızca `MainWindow._ui_queue`'ya yazar
+(`_post_ui`); ana thread `_drain_ui_queue` ile her `UI_POLL_MS` (50 ms) uygular.
+`BotStatus` kopyalanarak (`dataclasses.replace`) kuyruğa konur. Yeni callback
+eklerken `_post_ui` kullan.
 
 ## 3. `config_manager.update()` yazım hatalarını sessizce yutar
 
@@ -61,17 +67,20 @@ durdurmadan sürekli basar (hedef eşiğe asla ulaşamaz).
 **Savunma:** Yeni stat desenini eklerken `parse_stat_result` **ve**
 `_extract_stat_value` birlikte güncelle.
 
-## 7. `_bring_window_to_front` parametresini kullanmıyor  (ÇÖZÜLDÜ — ADR-0006)
+## 7. `_bring_window_to_front` başlıkla arıyordu  (ÇÖZÜLDÜ — ADR-0008)
 
 Eskiden metot `window_title: str = "SRO_Client"` alır ama eşleştirme sabitti:
 `'sro_client' in title.lower() or 'silkroad' in title.lower()`. Başka bir pencere
 başlığı geçirsen bile o pencere bulunmazdı.
 
-Artık `_window_title_candidates(window_title)` kullanılır: sırayla `window_title`
-→ `SRO_Client` → `Silkroad` denenir (pygetwindow ve ctypes yollarının ikisinde de).
+Başlık güvenilir değil: Macro_Client.exe giriş ekranında `SRO_Client`, girişten
+sonra `[<karakter>] Oasis 2005` başlığını taşır. Artık `_find_game_window()`
+pencereyi **süreç adı** (`Macro_Client.exe`) + **sınıf** (`MaxiGuard`) ile bulur;
+başka SRO istemcileri yok sayılır. Başlık yalnızca aynı süreç içinde tercih için
+kullanılır.
 
-**Savunma:** Oyuncu pencere adı özelleştirilmişse `_bring_window_to_front("...")`
-çağrısına doğru başlığı ver. Tanılamak için `python list_windows.py`.
+**Savunma:** Hedef istemci değişirse `bot_base.GAME_PROCESS_NAME` /
+`GAME_WINDOW_CLASS` sabitlerini güncelle. Tanılamak için `python list_windows.py`.
 
 ## 8. `mss` ve `pytesseract` import/çalışma zamanı bağımlılıkları
 
@@ -83,8 +92,8 @@ Artık `_window_title_candidates(window_title)` kullanılır: sırayla `window_t
   `%LOCALAPPDATA%\Programs\Tesseract-OCR` ve `TESSERACT_CMD` denenir; sürüm
   çalıştırılarak doğrulanır. Bulunamazsa `extract_text` boş string döner ve
   `ocr_processor.is_tesseract_available` `False` olur (GUI'de "Test OCR" bunu loglar).
-- Yeni bağımlılıklar (`pywin32`, `pygetwindow`) da import anında denenir; eksikse
-  `bot_base` sessizce `ctypes` yedek yoluna düşer.
+- `pywin32` import anında denenir; eksikse `bot_base` sessizce `ctypes` yedek
+  yoluna düşer.
 
 **Savunma:** `mss`/`pytesseract` gerektiren testleri hedef makinede çalıştır.
 Tesseract'ı PATH'e eklemek zorunda değilsin — yaygın kurulum dizinleri ve
@@ -103,14 +112,22 @@ ve depo kökü kirletilmez.
 `.gitignore` hem `test_*.py`, `*_test.py` hem `tests/` desenlerini dışlıyor. Test
 eklemek istersen bu engeli kaldırman gerekir (`.gitignore` güncellemesiyle birlikte).
 
-## 11. `_perform_iteration` uzun süre bloklanabilir
+## 11. Animasyon bitmeden tekrar tıklamak fuse'u iptal eder  (ÇÖZÜLDÜ)
 
-`animation_delay` (varsayılan 2500 ms) boyunca döngü **hiç kontrol yapmaz**. Bu süre
-içinde `stop()` çağrılsa bile `join(timeout=2.0)` zaman aşımına uğrar; döngü ancak
-iterasyon sonunda `_check_pause_stop()` ile durur.
+Fuse'a basınca animasyon başlar ve buton **"Cancel"** olur; sonuç log'a düşünce
+tekrar "Fuse" olur. Eski kod sabit `animation_delay` bekleyip tekrar tıklıyordu;
+animasyon daha uzun sürünce ikinci tıklama fuse'u iptal ediyordu.
 
-**Savunma:** `animation_delay` değerini gereğinden büyük ayarlama; kullanıcı "Durdur"
-düğmesine bastığında lütfen beklenen süre kadar bekler.
+Artık `BotBase._fuse_and_wait()` tıklamadan önce log'un metnini saklar, tıkladıktan
+sonra log ROI'yi yoklar ve **yalnızca alta yeni eklenen satırlarda** parse edilebilir
+bir sonuç görünce döner (`_new_line_strip`, bkz. §20). Araya giren sohbet satırları sonucu
+tetiklemez; ekranda duran eski sonuç tekrar okunmaz. `animation_delay` artık
+yalnızca **asgari** bekleme; üst sınır `RESULT_TIMEOUT_MS` (20 sn). Beklemeler
+`_stop_event.wait()` ile yapılır, "Durdur" hemen işler.
+
+**Savunma:** Log ROI en az 2–3 satır içermeli: tek satırlık ROI'de aynı metinli
+art arda iki sonuç (ör. iki "failed") görüntüyü değiştirmez ve 20 sn zaman aşımına
+düşer.
 
 ## 12. Plan dokümanı kodla uyuşmuyor
 
@@ -131,8 +148,16 @@ kontrolünü engeller. `SetCursorPos` `FALSE` döner; `GetLastError` `0`
 Click error: (0, 'SetCursorPos', 'No error message is available')
 ```
 
-**Savunma:** Botu **yönetici olarak** çalıştır. `BotBase.start()` yönetici
-değilse uyarı loglar; `main.py` de konsola not basar. Tanılamak için:
+Bu bir işletim sistemi güvenlik sınırıdır; `SendInput`, `PostMessage` vb. hiçbir
+yol yükseltilmemiş süreçten yükseltilmiş pencereye girdi taşıyamaz. Doğrulanmış
+örnek: pencere başlığı `SRO_Client`, süreç `Macro_Client`, token `elevated=1`.
+İpucu: kullanıcı botun kendi penceresine tıklayınca (ön plan değişince)
+`SetCursorPos` birden çalışır.
+
+**Savunma:** `main.py` yönetici değilse kendini UAC ile otomatik yeniden başlatır
+(`relaunch_elevated()`). Tıklama yine engellenirse `_abort_blocked_click()` botu
+durdurur; eski log boşuna OCR'lanmaz. `BotBase.start()` yönetici değilse uyarı
+loglar. Tanılamak için:
 
 ```powershell
 python -c "import ctypes; print(ctypes.windll.shell32.IsUserAnAdmin())"
@@ -163,5 +188,61 @@ SRO log ROI'sinin sağ kenarındaki kaydırma çubuğu ve panel butonları
 binarizasyonda koyu lekelere dönüşür; Tesseract bunları `Van oe (Y]` gibi
 satırlar olarak okur ve `raw_text` kirlenir.
 
-**Savunma:** `preprocess_image` `MORPH_OPEN` uygular ve 15 px beyaz kenarlık
-ekler. Kaldırılırsa sahte satırlar geri gelir.
+**Savunma:** `MORPH_OPEN` 2026-10-04'te kaldırıldı (1 px fontu bozuyordu, §18).
+Sahte satırlar artık sonucu etkilemez: yalnızca tıklamadan sonra alta **yeni**
+eklenen satırlar parse edilir ve stat aralıkları akla yatkınlık testinden geçer.
+
+## 17. Yönetici olarak çalışırken pencere API'leri botu kilitler
+
+`GetWindowTextLength`, çapraz-thread `ShowWindow`/`BringWindowToTop` (ve bunları
+kullanan pygetwindow) hedef pencereye senkron mesaj gönderir. Yükseltilmemiş
+süreçte UIPI mesajı reddettiği için sorun görünmez; **yönetici olunca** donmuş bir
+pencere thread'i sonsuza kadar bekletir. Belirti: "1 second..." logundan sonra
+hiçbir şey gelmez.
+
+**Savunma:** Oyun penceresine yalnızca mesaj göndermeyen API'lerle dokun
+(`InternalGetWindowText`, `GetClassNameW`, `ShowWindowAsync`, `IsHungAppWindow`)
+— [ADR-0008](adr/0008-game-window-by-process.md). `stop()` takılan thread'in
+yığınını loglar.
+
+## 18. Bitmap log fontu: blur/Otsu/cubic büyütme rakamları değiştirir
+
+SRO log'u kenar yumuşatmasız 1 px bitmap fonttur. Eski ön işleme (cubic x3 +
+GaussianBlur + Otsu + MORPH) `538`'i `638`, `551`'i `651`, `]`'yi `j`/`3` okuyordu;
+bot hedefi (646 ≥ 640) kaçırdı. Ölçüm: sabit eşik + `INTER_NEAREST` x2 her rakamı
+doğru okur; x3/x4 hâlâ hata yapar.
+
+**Savunma:** `preprocess_image` önce eşikler, sonra nearest büyütür
+(`DEFAULT_OCR_SCALE = 2`). Ek güvenceler: `_plausible_range` (min ≤ max, 0.5x–2x),
+zincir kontrolü (yeni `old_range` = önceki `new_range`) ve `ALT_OCR_PASSES` oylaması
+(`BotBase._confirm_result`). Sonuç okunamazsa bot **tekrar tıklamaz, durur**.
+
+## 19. Tıklamadan sonra log alanı oyunun ARKASINDAKİ pencereyi gösteriyor
+
+Gerçek vaka (2026-10-04): `fuse_before.png` oyunu gösteriyor, tıklamadan sonra 20 sn
+boyunca yakalama oyunun arkasındaki VS Code terminalini gösterdi; oyun ise ön
+plandaydı. Olası nedenler: bir pencere log alanını örtüyor ya da oyun kendini
+ekran yakalamadan gizliyor (`SetWindowDisplayAffinity`, anti-cheat).
+
+**Savunma:** Her yoklamada `_ensure_log_area_visible()` log alanını örten pencereleri
+(Z-sırası, mesaj göndermeden) bulur, loglar ve oyunu öne getirir; display affinity
+≠ 0 ise uyarır. Alan boş okununca ve zaman aşımında `_log_capture_diagnostics()`
+ön plan / simge durumu / dikdörtgen / affinity / örten pencereleri loglar.
+
+## 20. Satıra kaydırılan sonuç "yeni satır" karşılaştırmasını kandırır
+
+Sonuç mesajı 2–3 satıra bölünür; son satır yalnızca `%)].` olur. Yeni sonucun son
+satırı öncekininkiyle aynı olduğundan satır bazlı fark (`_new_log_lines`) "yeni bir
+şey yok" dedi ve bot 20 sn sonra durdu (gerçek vaka, 2026-10-04). Kaydırma çubuğu
+da satır sonlarına rastgele karakter (`i`, `fa`, `r`) ekler.
+
+Değer karşılaştırması da yetmedi: aynı sonuç üst üste gelince (`(139.9~171.0)` iki
+kez) eski ile yeni ayırt edilemedi (gerçek vaka, 2026-10-04).
+
+**Savunma:** `BotBase._new_line_strip` satırları **piksel** olarak karşılaştırır:
+maske satır bantlarına bölünür, öncekinin son satırlarıyla yeninin ilk satırlarının
+en uzun örtüşmesi bulunur, kalan satırlar yenidir ve **yalnızca o şerit** OCR'lanır
+(iki mod için de). Üst kenarda kesik satırlar ve iki görüntüde aynı yerde duran alt
+bant (panel ikonu) yok sayılır. Kaydırma çubuğu `ocr_processor.crop_scrollbar` ile
+kesilir. Sınır: log alanını tamamen dolduran ardışık **piksel-aynı** sonuçlar
+ayırt edilemez → bot güvenli durur; log alanını yüksek seçmek bunu azaltır.

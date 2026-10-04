@@ -16,17 +16,19 @@ Bağımlılık yönü **yukarı**: `core` asla `gui` import etmez; `gui` `core`'
 
 ## Tek iterasyonun veri akışı
 
-`PlusModeBot` / `StatModeBot` içindeki `_perform_iteration()` şu sırayı izler:
+`PlusModeBot` / `StatModeBot` içindeki `_perform_iteration()` ortak
+`BotBase._fuse_and_wait(mode)` yardımcısını çağırır, sonra karar verir:
 
 ```
- 1. _bring_window_to_front()          SRO_Client penceresini öne getir
- 2. sleep(0.3)                        odaklanma bekle
- 3. _click_at(fuse_x, fuse_y, 50)     Win32 SetCursorPos + mouse_event
- 4. sleep(animation_delay / 1000)     oyun animasyonu + log satırının oluşması
- 5. _bring_window_to_front() + 0.1s   yakalamadan önce tekrar öne getir
- 6. screen_capture.capture_region(*log_roi)          → BGR ndarray
- 7. ocr_processor.process_log_region(img, mode, threshold, psm) → ParseResult
- 8. sonuca göre karar:
+ 1. _bring_window_to_front() + 0.3s   oyun penceresini öne getir
+ 2. _capture_log_text()               log ROI'nin tıklama ÖNCESİ metni (baseline)
+ 3. _click_at(fuse_x, fuse_y, 50)     SendInput; TEK tıklama (buton artık "Cancel")
+ 4. stop_event.wait(animation_delay)  sonuç animasyondan önce gelemez
+ 5. her 0.25 sn: log ROI yakala; görüntü değiştiyse OCR →
+    _new_line_strip(before, now)      piksel karşılaştırmasıyla YENİ satır şeridi → yalnızca o OCR'lanır
+    parse_plus/stat_result(yeni)      başarılıysa çık; sohbet satırıysa beklemeye devam
+    RESULT_TIMEOUT_MS (20 sn) dolarsa success=False ParseResult
+ 6. sonuca göre karar:
       result_type == "plus" | "stat"  → değeri güncelle, hedefe ulaştıysa True döndür
       result_type == "failed"         → _consecutive_failures += 1
       success == False                → hata logla, döngüde kal
@@ -40,15 +42,12 @@ Bu ortak kasıtlıdır: yeni mod eklerken 1–7'yi kopyalamak yerine `BotBase` y
 ```
 BGR ndarray
   → cvtColor(BGR2GRAY)                 gri tonlama
-  → resize(3x/2x) (h<200 / h<400)      küçük kırpımları büyüt
-  → GaussianBlur(3,3)                 gürültü azaltma
-  → threshold(THRESH_BINARY + THRESH_OTSU)   Otsu ile otomatik eşik
+  → threshold(gray, ocr_threshold)     SABİT eşik (Otsu yok): yazı ≈201, zemin ≤ ~60
   → invert (mean < 127 ise)            açık-yazı/koyu-zemin → koyu-yazı/açık-zemin
-  → morphologyEx(OPEN, 2x2)           kaydırma çubuğu / benek gürültüsünü at
-  → morphologyEx(CLOSE, 2x2)          kopan çizgileri birleştir
-  → copyMakeBorder(15 px beyaz)        Tesseract kenar boşluğu ister
+  → resize(x2, INTER_NEAREST)          1 px bitmap fontu keskin büyüt (blur YOK)
+  → copyMakeBorder(20 px beyaz)        Tesseract kenar boşluğu ister
   → pytesseract.image_to_string(--psm N --oem 3 -c tessedit_char_whitelist=...)
-  → regex ayrıştırma                  ParseResult
+  → regex ayrıştırma (+ akla yatkınlık) ParseResult
 ```
 
 Tesseract whitelist'i `ocr.py` içinde sabittir ve rakam, `+ - . > % ~ [ ] ( )` ile
@@ -130,15 +129,15 @@ sessizce düşürür. Alan adı = JSON anahtarıdır. Bkz. [modules/core-config.
 | `_click_at(x, y, delay_ms)` | Önce **SendInput** (imleç + `LEFTDOWN`/`LEFTUP`), olmazsa `SetCursorPos` + `mouse_event`; imleç doğrulanmadan basılmaz |
 | `_to_virtual_desktop(x, y)` | Sanal masaüstüne göre 0..65535 absolüt koordinat |
 | `_is_elevated()` / `_cursor_near()` | Yönetici denetimi ve imleç doğrulaması |
-| `_window_title_candidates(title)` | `title` → `SRO_Client` → `Silkroad` sıralı başlık parçaları |
-| `_bring_window_to_front(title)` | pygetwindow varsa `restore()` + `activate()`; yoksa `EnumWindows` + `SetForegroundWindow` + Alt tuşu hilesi |
+| `_find_game_window(title)` | `Macro_Client.exe` süreci + `MaxiGuard` sınıfı ile oyun penceresi |
+| `_bring_window_to_front(title)` | Mesaj göndermeden (`ShowWindowAsync` + `SetForegroundWindow` + Alt tuşu hilesi) öne getirir; donmuş pencerede beklemez |
 | `_play_alarm(kind)` | `winsound.Beep` ile success/failure/warning tonları |
 
 Tıklama **SendInput** tabanlıdır ([ADR-0007](adr/0007-sendinput-and-elevation.md)):
 SRO DirectInput/Raw Input okuduğu için `mouse_event` olayları oyuna ulaşmaz.
-Pencere aktivasyonu **pygetwindow** ile yapılır
-([ADR-0006](adr/0006-input-backend-pywin32-pygetwindow.md)); her iki bağımlılık da
-isteğe bağlıdır ve yoksa saf `ctypes` yedeği devreye girer.
+Pencere aktivasyonu saf `ctypes` ile, oyuna mesaj göndermeden yapılır
+([ADR-0008](adr/0008-game-window-by-process.md)); `pywin32` isteğe bağlıdır ve
+yoksa saf `ctypes` yedeği devreye girer.
 
 > **Yönetici yetkisi şarttır.** Ön planda yükseltilmiş bir pencere (genelde
 > SRO_Client) varken Windows, yükseltilmemiş sürecin imleç kontrolünü engeller

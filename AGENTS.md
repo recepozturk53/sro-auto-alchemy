@@ -9,7 +9,7 @@
 ## 1. Proje
 
 Silkroad Online `SRO_Client` penceresi üzerinde çalışan **OCR tabanlı otomatik Alchemy botu**.
-Fuse (basma) butonuna tıklar → animasyonu bekler → oyun log'unun ekran görüntüsünü alır →
+Fuse (basma) butonuna tıklar → log'a yeni sonuç düşene kadar bekler (animasyonda buton "Cancel" olur, tekrar tıklanmaz) → oyun log'unun ekran görüntüsünü alır →
 Tesseract ile okur → hedef değere ulaşınca durur, sesli alarm çalar.
 
 - **Windows-only**: `ctypes.windll`, `winsound`, `mss` kullanılır. Başka OS desteği yok.
@@ -69,11 +69,11 @@ python tools/ctx.py <konu>                    # "bu iş için hangi dosyalar?" (
 | `main.py` | L0 | logging kurulumu, bağımlılık kontrolü, uygulama başlatma | [modules/entrypoint.md](docs/modules/entrypoint.md) |
 | `src/gui/main_window.py` | L1 | Ana pencere, mod seçimi, girdi alanları, butonlar, log kutusu | [modules/gui-main-window.md](docs/modules/gui-main-window.md) |
 | `src/gui/coordinate_picker.py` | L1 | Tam ekran overlay ile nokta (fuse) / dikdörtgen (log ROI) seçimi | [modules/gui-coordinate-picker.md](docs/modules/gui-coordinate-picker.md) |
-| `src/core/bot_base.py` | L2 | `BotBase` ABC, thread yönetimi, durum makinesi, tıklama (SendInput→SetCursorPos; **yönetici yetkisi gerekir**) ve pencere (pygetwindow→ctypes) | [modules/core-bot-base.md](docs/modules/core-bot-base.md) |
+| `src/core/bot_base.py` | L2 | `BotBase` ABC, thread yönetimi, durum makinesi, tıklama (SendInput→SetCursorPos; **yönetici yetkisi gerekir**) ve pencere (Macro_Client.exe süreci + `MaxiGuard` sınıfı, ctypes, mesaj göndermeden) | [modules/core-bot-base.md](docs/modules/core-bot-base.md) |
 | `src/core/bot_plus.py` | L2 | Plus modu ana döngüsü ve hedef kararı | [modules/core-bot-plus.md](docs/modules/core-bot-plus.md) |
-| `src/core/bot_stat.py` | L2 | Stat modu ana döngüsü, `new_avg`/`new_value` çözümleme | [modules/core-bot-stat.md](docs/modules/core-bot-stat.md) |
+| `src/core/bot_stat.py` | L2 | Stat modu ana döngüsü, `new_range[1]`/`new_value` çözümleme | [modules/core-bot-stat.md](docs/modules/core-bot-stat.md) |
 | `src/core/screen_capture.py` | L3 | `mss` ile bölge yakalama, BGR ndarray üretimi | [modules/core-screen-capture.md](docs/modules/core-screen-capture.md) |
-| `src/core/ocr.py` | L3 | Tesseract konum tespiti → ön işleme (Otsu + otomatik ters çevirme) → Tesseract → regex ayrıştırma (`ParseResult`) | [modules/core-ocr.md](docs/modules/core-ocr.md) |
+| `src/core/ocr.py` | L3 | Tesseract konum tespiti → ön işleme (sabit eşik + ters çevirme + x2 nearest büyütme; bitmap font) → Tesseract → regex ayrıştırma (`ParseResult`) | [modules/core-ocr.md](docs/modules/core-ocr.md) |
 | `src/core/config.py` | L4 | `BotConfig` alanları, JSON kalıcılık, thread-safe erişim | [modules/core-config.md](docs/modules/core-config.md) |
 
 > `sro_alchemy_bot_entegration_plan.md` **tarihsel plan dokümanıdır; kodla uyuşmaz.**
@@ -92,7 +92,7 @@ Bu tablo **kaynak gerçeğidir**. Emin değilsen `python tools/ctx.py <konu>` ç
 | OCR ön işleme / Tesseract ayarı | `src/core/ocr.py` | `docs/modules/core-ocr.md` |
 | Tesseract bulunamıyor / OCR motoru | `src/core/ocr.py` (`locate_tesseract`) | `docs/modules/core-ocr.md` |
 | Yeni log formatı / regex | `src/core/ocr.py` | `docs/modules/core-ocr.md` (sıra kuralı) |
-| Stat değer çözümleme (`new_avg`/`new_value`) | `src/core/bot_stat.py` | `docs/modules/core-bot-stat.md` |
+| Stat değer çözümleme (`new_range[1]`/`new_value`) | `src/core/bot_stat.py` | `docs/modules/core-bot-stat.md` |
 | Plus modu döngüsü / hedef | `src/core/bot_plus.py` | `docs/modules/core-bot-plus.md` |
 | Yeni bot modu | `src/core/bot_<mod>.py` **+ `config.py` + `ocr.py` + `main_window.py`** | `docs/patterns.md` Tarif 1 |
 | Thread / pause / stop / durum | `src/core/bot_base.py` | `docs/modules/core-bot-base.md` |
@@ -112,9 +112,9 @@ Bu tablo **kaynak gerçeğidir**. Emin değilsen `python tools/ctx.py <konu>` ç
 | `start()` çağırıp `configure()`'ı atlamak | `configure()` önce; aksi halde `AttributeError` |
 | Yeni regex'i ilk sıraya koymak | Mevcut öncelik sırasını koru, gerekçeni dokümana yaz |
 | `config_manager.update(fuse_bttn_x=...)` | Alan adı `BotConfig` ile birebir olmalı, yoksa **sessizce** yutulur |
-| Yeni stat deseni eklerken `_extract_stat_value`'yi unutmak | Sonuç `new_avg`/`new_value` anahtarlarına normalize edilmeli |
+| Yeni stat deseni eklerken `_extract_stat_value`'yi unutmak | Sonuç `new_range`/`new_value` anahtarlarına normalize edilmeli |
 | Yeni bağımlılık eklerken spec'i atlamak | `requirements.txt` **+** `sro_alchemy_bot.spec` hiddenimports |
-| Tıklamayı yalnızca `ctypes` ile bırakmak | pywin32/pygetwindow birincil; `ctypes` yedek yolunu da koru (ADR-0006) |
+| Tıklamayı yalnızca `ctypes` ile bırakmak | pywin32 birincil; `ctypes` yedek yolunu da koru (ADR-0006/0007). Pencere yardımcıları ctypes-only (ADR-0008) |
 | `Click error: (0, 'SetCursorPos', ...)` görünce koda dalmak | Kök neden UIPI: botu **yönetici** olarak çalıştır (ADR-0007) |
 | `mouse_event` ile oyuna tıklamayı beklemek | Raw Input oyunları görmez; `SendInput` kullan (ADR-0007) |
 | Bot thread'den doğrudan `widget.configure()` | `root.after(0, ...)` ile marshal et |
@@ -151,7 +151,7 @@ Tamamı ve kanıtları: `docs/gotchas.md`.
 11. `SetCursorPos` yönetici olmayan süreçte sessizce başarısız olur (UIPI, hata 0) → botu **yönetici** çalıştır.
 12. `mouse_event` Raw Input oyunlarına ulaşmaz; tıklama **SendInput** ile yapılır.
 13. İmleç doğrulanmadan tuşa basılmaz → yanlış yere tıklama koruması.
-14. Log panelindeki kaydırma çubuğu OCR'a sahte satır üretir → `MORPH_OPEN` + beyaz kenarlık.
+14. Log panelindeki kaydırma çubuğu OCR'a sahte satır üretir → yalnızca yeni satırlar parse edilir + akla yatkınlık (MORPH_OPEN kaldırıldı, gotcha §18).
 
 ---
 

@@ -34,7 +34,7 @@ Fuse butonuna tıklar, animasyonu bekler, log'dan **güncel + seviyesini** okur 
    - `except` → hata logla, `_consecutive_failures += 1`
 4. Döngüden çıkışta `stop_reason=USER_STOPPED`.
 
-`_perform_iteration()` ortak 7 adımı yapar (bkz. [architecture.md](../architecture.md));
+`_perform_iteration()` `_fuse_and_wait("plus")` ile tek tıklayıp yeni sonuç satırını bekler (bkz. [architecture.md](../architecture.md));
 sonunda `result.result_type` dalına göre karar verir:
 
 | Sonuç | Davranış |

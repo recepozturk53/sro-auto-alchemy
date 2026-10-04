@@ -6,7 +6,7 @@ Değişiklik yapmadan önce oku.
 Hızlı yönlendirme:
 - Katmanlar: L0 `main.py` → L1 `src/gui/` → L2 `src/core/bot_*` → L3 `ocr.py`/`screen_capture.py` → L4 `config.py`
 - Bağımlılık tek yönlüdür: `core` asla `gui` import etmez.
-- Win32 birimleri (`_click_at`, `_bring_window_to_front`, `_window_title_candidates`, `_play_alarm`) `src/core/bot_base.py` içindedir; tıklama **SendInput** ile yapılır ve **yönetici yetkisi şarttır** (ADR-0007), pencere pygetwindow ile aktive edilir, yedek yol `ctypes`.
+- Win32 birimleri (`_click_at`, `_bring_window_to_front`, `_find_game_window`, `_play_alarm`) `src/core/bot_base.py` içindedir; tıklama **SendInput** ile yapılır ve **yönetici yetkisi şarttır** (ADR-0007), pencere `Macro_Client.exe` süreci + `MaxiGuard` sınıfıyla bulunur ve oyuna mesaj göndermeden `ctypes` ile aktive edilir (ADR-0008).
 - Tesseract `ocr.py` içindeki `locate_tesseract()` ile PATH + yaygın kurulum dizinleri + `TESSERACT_CMD` üzerinden bulunur.
 - Servisler singleton'dır: `config_manager`, `ocr_processor`, `screen_capture`.
 - `start()` öncesi `configure()` zorunludur (bot sınıflarında zamanlama alanları orada atanır).

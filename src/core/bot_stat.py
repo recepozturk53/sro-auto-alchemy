@@ -8,8 +8,6 @@ import time
 from typing import Optional, Dict, Any
 from .bot_base import BotBase, BotState, StopReason
 from .config import config_manager
-from .screen_capture import screen_capture
-from .ocr import ocr_processor, ParseResult
 
 
 class StatModeBot(BotBase):
@@ -129,8 +127,9 @@ class StatModeBot(BotBase):
                 self._consecutive_failures += 1
                 self._update_status(failures=self._consecutive_failures)
         
-        # Stopped by user
-        self._update_status(stop_reason=StopReason.USER_STOPPED)
+        # Stopped by user (a blocked click already recorded its own reason)
+        if self._status.state != BotState.FAILED:
+            self._update_status(stop_reason=StopReason.USER_STOPPED)
     
     def _perform_iteration(self) -> bool:
         """
@@ -139,50 +138,17 @@ class StatModeBot(BotBase):
         Returns:
             True if target reached, False otherwise
         """
-        config = config_manager.config
-        fuse_x, fuse_y = config_manager.get_fuse_button()
-        log_roi = config_manager.get_log_roi()
-        
-        # 1. Bring SRO window to front BEFORE clicking
-        if not self._bring_window_to_front():
-            self._log("WARNING: Could not activate SRO window, trying anyway...")
-        
-        time.sleep(0.3)  # Wait for window to be active
-        
-        # 2. Click the fuse button
-        self._log(f"Clicking fuse button at ({fuse_x}, {fuse_y})")
-        self._click_at(fuse_x, fuse_y, 50)
-        
-        # 3. Wait for animation AND for new log to appear
-        self._log(f"Waiting {self._animation_delay}ms for animation...")
-        time.sleep(self._animation_delay / 1000.0)
-        
-        # 4. Make sure window is still in front before capture
-        self._bring_window_to_front()
-        time.sleep(0.1)
-        
-        # 5. Capture log region
-        log_image = screen_capture.capture_region(
-            log_roi[0], log_roi[1], log_roi[2], log_roi[3]
-        )
-        
-        # 6. Process with OCR
-        result: ParseResult = ocr_processor.process_log_region(
-            log_image, 
-            mode="stat",
-            threshold=config.ocr_threshold,
-            psm=config.tesseract_psm
-        )
-        
-        # Truncate long raw text for logging
-        raw_text_short = result.raw_text[:150] + "..." if len(result.raw_text) > 150 else result.raw_text
-        self._log(f"OCR Result: {result.result_type} - {raw_text_short}")
-        
-        # 7. Update iteration count
+        # Click once, then wait for the game to log the result: clicking
+        # again during the animation would hit "Cancel" and abort the fuse.
+        result = self._fuse_and_wait("stat")
+        if result is None:
+            return False  # Stopped by user or click blocked
+
+        # Update iteration count
         iterations = self.status.iterations + 1
         self._update_status(iterations=iterations)
         
-        # 6. Parse result
+        # Parse result
         if result.success:
             if result.result_type == "stat":
                 stat_value = self._extract_stat_value(result.value)
@@ -201,7 +167,14 @@ class StatModeBot(BotBase):
                     failures=0,
                     message=f"Current: {stat_value:.2f} (Best: {self._best_stat:.2f})"
                 )
-                self._log(f"Stat detected: {stat_value:.2f}")
+                if 'new_range' in result.value:
+                    low, high = result.value['new_range']
+                    self._log(
+                        f"Stat detected: new range {low:g} ~ {high:g} "
+                        f"(target {self._target_threshold:g} vs {high:g})"
+                    )
+                else:
+                    self._log(f"Stat detected: {stat_value:.2f}")
                 
                 # Check if target reached
                 if stat_value >= self._target_threshold:
@@ -229,9 +202,10 @@ class StatModeBot(BotBase):
         Returns:
             Float value of the current stat
         """
-        # Range format: [(82.9%~98.6%) -> (81.6%~97.1%)]
-        if 'new_avg' in value_data:
-            return value_data['new_avg']
+        # Range format: [(549 ~ 644) -> (551 ~ 646)] - the target is compared
+        # with the UPPER bound of the new range (646 here)
+        if 'new_range' in value_data:
+            return value_data['new_range'][1]
         
         # Simple format: [12.2->12.4]
         if 'new_value' in value_data:
