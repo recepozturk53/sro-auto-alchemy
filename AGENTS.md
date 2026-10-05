@@ -14,6 +14,7 @@ Tesseract ile okur → hedef değere ulaşınca durur, sesli alarm çalar.
 
 - **Windows-only**: `ctypes.windll`, `winsound`, `mss` kullanılır. Başka OS desteği yok.
 - **Modlar**: `plus` (+ basma) ve `stat` (attribute / magic powder).
+- **Stat hedefi**: varsayılan log aralığı üst sınırı; isteğe bağlı eşya tooltip'inde seçilen tek yüzde. Yüzde okunamazsa yeni fuse yapılmaz.
 - **Arayüz**: CustomTkinter (dark tema), Tk **main thread**'de.
 - **Dağıtım**: PyInstaller → `dist/SROAutoAlchemyBot.exe` (`sro_alchemy_bot.spec`).
 - **Dil/konuş**: Kod ve yorumlar İngilizce, dokümantasyon Türkçe. Bu ayrımı koru.
@@ -115,7 +116,7 @@ Bu tablo **kaynak gerçeğidir**. Emin değilsen `python tools/ctx.py <konu>` ç
 | Yeni stat deseni eklerken `_extract_stat_value`'yi unutmak | Sonuç `new_range`/`new_value` anahtarlarına normalize edilmeli |
 | Yeni bağımlılık eklerken spec'i atlamak | `requirements.txt` **+** `sro_alchemy_bot.spec` hiddenimports |
 | Tıklamayı yalnızca `ctypes` ile bırakmak | pywin32 birincil; `ctypes` yedek yolunu da koru (ADR-0006/0007). Pencere yardımcıları ctypes-only (ADR-0008) |
-| `Click error: (0, 'SetCursorPos', ...)` görünce koda dalmak | Kök neden UIPI: botu **yönetici** olarak çalıştır (ADR-0007) |
+| `Click error: (0, 'SetCursorPos', ...)` görünce tek neden varsaymak | `diagnose_input.py` ile imleç alanı ve gerçek konumu ölç; UIPI olası nedenlerden biridir (ADR-0007) |
 | `mouse_event` ile oyuna tıklamayı beklemek | Raw Input oyunları görmez; `SendInput` kullan (ADR-0007) |
 | Bot thread'den doğrudan `widget.configure()` | `root.after(0, ...)` ile marshal et |
 | Yeni modül ekleyip haritayı güncellememek | `module-index.json` + `docs/modules/*.md` + `verify_docs.py` |
@@ -152,6 +153,8 @@ Tamamı ve kanıtları: `docs/gotchas.md`.
 12. `mouse_event` Raw Input oyunlarına ulaşmaz; tıklama **SendInput** ile yapılır.
 13. İmleç doğrulanmadan tuşa basılmaz → yanlış yere tıklama koruması.
 14. Log panelindeki kaydırma çubuğu OCR'a sahte satır üretir → yalnızca yeni satırlar parse edilir + akla yatkınlık (MORPH_OPEN kaldırıldı, gotcha §18).
+15. Yeni log şeridindeki açık `alchemy ... fail` sonucu, stat zinciri ve alternatif OCR oylaması gerektirmeden kabul edilir; aynı failed metni art arda gelebilir. Stat modunda normal stone başarısızlığı değeri değiştirmez ve teknik hata limiti sayılmaz (gotcha §22).
+16. Yeni log şeridinde stat ve `failed` birlikte görünürse en son olay seçilir; stat OCR'sı başarısızlığı kaçırdıysa alternatif geçişler stat zinciri kabul edilmeden önce açık `alchemy ... fail` satırını arar (gotcha §22).
 
 ---
 
@@ -165,7 +168,7 @@ Tamamı ve kanıtları: `docs/gotchas.md`.
 | `python tools/ctx.py --file <yol>` | Bir dosyayı hangi modüller/görevler sahipleniyor |
 | `python tools/verify_docs.py` | Haritanın kodla uyumunu denetler (CI'ya bağlanabilir) |
 | `python list_windows.py` | SRO_Client penceresini bulur (pencere adı değiştiyse güncelle) |
-| `python diagnose_input.py` | Tıklama teşhisi: yönetici mi, SendInput imleci hedefe taşıyor mu (imleci oynatır, **tıklamaz**) |
+| `python diagnose_input.py` | Tıklama teşhisi: yönetici mi, imleç alanı nerede, SendInput/SetCursorPos hedefe taşıyor mu (imleci oynatır, **tıklamaz**) |
 
 ---
 

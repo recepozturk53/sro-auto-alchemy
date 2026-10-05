@@ -39,24 +39,34 @@ Oyun penceresi `Macro_Client.exe` sürecine ait, sınıfı `MaxiGuard` olmalı
 (başlık girişten sonra `[<karakter>] Oasis 2005` olur). Bulunamıyorsa
 `bot_base.GAME_PROCESS_NAME` / `GAME_WINDOW_CLASS` sabitlerini kontrol et.
 
-## Katman 3.5 — Tıklama teşhisi (oyun açıkken, **yönetici**)
+## Katman 3.5 — Tıklama teşhisi (oyun açıkken, botla aynı PowerShell'den)
 
 ```powershell
-python diagnose_input.py          # yalnızca imleç kontrolü (tıklamaz)
-python diagnose_input.py --click  # fuse butonuna gerçekten basar
+.\.venv\Scripts\python.exe diagnose_input.py          # yalnızca imleç kontrolü
+.\.venv\Scripts\python.exe diagnose_input.py --click  # fuse butonuna basar
 ```
 
 Beklenen çıktı:
 
 ```
-Administrator : True
+Administrator : True/False
+Game elevated : True/False/None
 Fuse button   : (1237, 927)
+Cursor area   : (...) - (...)
+Fuse in area  : True
+Before game   : OK -> cursor at (1237, 927)
 Window        : activated
 SendInput move: OK -> cursor at (1237, 927)
 ```
 
-`Administrator : False` **veya** `SendInput move: FAILED` ise tıklama bloke
-olacaktır → komut satırını **yönetici olarak** aç (gotcha #13).
+`Administrator : False` tek başına arıza değildir; oyun da aynı yetkiyle
+çalışıyorsa giriş kabul edilebilir. `SendInput move: FAILED` durumunda
+`Fuse in area`, `Before game`, `Game elevated`, gerçek imleç konumu ve
+`SetCursorPos` sonucuna bak. `Game elevated: None` token okunamadı demektir;
+`Game elevated: True`, `Administrator: False`, `Before game: OK` ve oyun önde
+`SendInput move: FAILED` birleşimi yetki farkını doğrular. Bu durumda botu
+yönetici PowerShell'den başlat; UAC bunu engelliyorsa sistem yöneticisinin
+izni gerekir.
 
 ## Katman 4 — Entegrasyon: OCR testi (oyun açıkken)
 
@@ -86,12 +96,12 @@ giden siyah-beyaz görüntü) kaydedilir.
 ## Katman 5 — Entegrasyon: bot turu (oyun açıkken)
 
 0. **Botu yönetici olarak çalıştır** — SRO_Client yönetici ise bu şarttır (gotcha #13).
-   Log'da `WARNING: Not running as Administrator...` varsa tıklama bloke olacaktır.
+   Log'da `WARNING: Not running as Administrator...` varsa oyunun yetkisini de kontrol et.
 1. Hedef değeri **gerçekçi** seç (ör. hedef `+1`); yüksek hedefle bekleme.
 2. `▶ Start` → 3 saniyelik geri sayım → oyun penceresine geç.
 3. Beklenen: pencere öne gelir, `Clicked at (x, y) [SendInput]` loglanır,
    `Iterations` artar, `Current` değişir.
-   - `Click FAILED ... cursor could not be positioned` → yönetici değil (gotcha #13/#15).
+   - `Click FAILED ... cursor could not be positioned` → `diagnose_input.py` ile imleç alanı ve giriş sonucunu kontrol et.
 4. `⏸ Pause` → sayılar durur. `▶ Resume` → devam eder.
 5. `⏹ Stop` → durur, durum `Stopped` olur.
 
@@ -113,7 +123,7 @@ Sorun yaşadığında **dışarıdan içeri** doğru ilerle:
 |---|---|
 | OCR boş/`unknown` | Katman 4 → `debug_log_region.png` ile ROI'yi gör |
 | Değer yanlış çıkıyor | `raw_text` ile regex'in yakaladığı kısmı karşılaştır |
-| Tıklama olmuyor | Log'da `Click FAILED` / `SetCursorPos ignored` var mı? → botu **yönetici** çalıştır (gotcha #13). Pencere bulundu mu? `Pick Fuse Button` doğru mu? |
+| Tıklama olmuyor | Aynı ortamda `diagnose_input.py` çalıştır; imleç alanı, hedef koordinat ve iki taşıma sonucuna bak. Oyun daha yüksek yetkideyse yetkileri eşitle. |
 | Bot başlamıyor | Log kutusunda `ERROR: Please configure fuse button and log ROI` var mı? |
 | Hemen duruyor | `current_plus >= target` → hedefi düşür |
 | Düzensiz donuyor | `animation_delay` yetersiz olabilir → artır |

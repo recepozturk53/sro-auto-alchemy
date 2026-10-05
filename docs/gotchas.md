@@ -139,6 +139,12 @@ düşer.
 
 ## 13. `SetCursorPos` yönetici olmayan süreçte sessizce başarısız olur (UIPI)
 
+`SetCursorPos` hatası **tek başına** UIPI kanıtı değildir. `GetClipCursor`
+hedefi dışarıda tutabilir; çağıran thread'in giriş masaüstü erişimi de gerekli.
+`diagnose_input.py` imleç alanını, hedefin alanda olup olmadığını, oyun
+token'ının yükseltilmişliğini, oyunu öne almadan ve aldıktan sonra taşıma
+sonucunu ve gerçek imleç konumunu gösterir.
+
 Ön planda **yükseltilmiş (elevated)** bir pencere varken (SRO_Client genelde
 yönetici olarak çalışır), Windows yükseltilmemiş süreçlerin fare/klavye
 kontrolünü engeller. `SetCursorPos` `FALSE` döner; `GetLastError` `0`
@@ -246,3 +252,44 @@ en uzun örtüşmesi bulunur, kalan satırlar yenidir ve **yalnızca o şerit** 
 bant (panel ikonu) yok sayılır. Kaydırma çubuğu `ocr_processor.crop_scrollbar` ile
 kesilir. Sınır: log alanını tamamen dolduran ardışık **piksel-aynı** sonuçlar
 ayırt edilemez → bot güvenli durur; log alanını yüksek seçmek bunu azaltır.
+
+## 21. Eşya tooltip'inde birden çok yüzde var
+
+Yay, fiziksel saldırı, büyüsel saldırı ve dayanıklılık için ayrı yüzdeler
+gösterebilir. Bütün tooltip'i ROI seçmek yanlış hedefe bakma riski yaratır.
+Yüzde hedefi için mümkünse yalnızca istenen `+28%` gibi tek değerin alanını seç
+ve `Test % OCR` ile doğrula. Tam stat satırı seçilmişse OCR tek bir `(+N%)`
+bonusunu aralıktaki yüzdelerden ayırır. Küçük fontun `(+0%)` → `(+0%0)`
+okunması, yalnızca bir fazla `0` olacak şekilde kabul edilir. Eşyanın ya da
+oyun penceresinin yeri değişirse
+ekran koordinatlarını yeniden seç. OCR birden fazla yüzde görürse veya
+okuyamazsa bot yeni fuse yapmadan durur.
+
+Dar ROI sağ parantezi kesebilir: `...47.6(+22%` çıktısı yalnızca sondaki
+`(+N%` biçimindeyse bonus olarak alınır. Böylece `22%`, `60%` hedefine
+ulaşılmış gibi sayılmaz; bot yeni fuse turuna geçer.
+
+Bir örnekte ekrandaki `(+22%)` OCR tarafından `(422%)` okundu. `+` yerine
+gelen ilk `4`, yalnızca parantezli `4xx%` biçiminde ve geriye iki basamaklı
+geçerli bonus kalıyorsa kaldırılır; `(40%)` gibi belirsiz değer tahmin edilmez.
+
+Yüzde bölgesi seçerken imleci kodla eşyanın üstüne taşımak, yönetici yetkisi
+engellenen makinelerde seçim overlay'inin hiç açılmamasına neden oluyordu.
+Kurulumdaki `Select % Area` ve `Test % OCR` artık 8 saniyelik **elle hover**
+beklemesi kullanır. Bu yalnızca kurulum/test engelini çözer; çalışma sırasındaki
+otomatik fuse ve item hover için Windows'un sentetik girdiye izin vermesi gerekir.
+
+## 22. Başarısız stone sonucu yeni stat değeri taşımaz
+
+Yeni log şeridindeki `alchemy enhancement has fail` sonucu `value=None` taşır.
+Alternatif OCR geçişleri bu küçük satırı kaçırabilir; normal stat zinciri ve
+çoklu okuma oylaması `None / None / ...` üreterek sonucu reddeder. Arka arkaya
+iki başarısızlık aynı metni taşıdığı için yalnızca `value` karşılaştırması da
+yanlıştır. Yeni piksel şeridi ile ayrılmış ve alchemy ifadesiyle bağlanmış
+`failed` sonucu doğrudan kabul edilir. Yeni şeritte eski bir stat satırı da
+görünüyorsa olayların sonuncusu seçilir; ilk OCR başarısızlık satırını kaçırırsa
+stat zinciri kabul edilmeden önce alternatif OCR geçişlerinde açık alchemy
+başarısızlığı aranır. Aksi halde eski `[24->24]` statı yeni sonuç sanılıp
+tooltip bulunamadığı için bot durabilir.
+Normal stone başarısızlığı stat değerini değiştirmez ve stat modunda teknik
+hata sayacına girmez; son başarılı sonuç sonraki fuse için zincir çıpası kalır.

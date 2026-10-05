@@ -36,7 +36,7 @@ class MainWindow:
         # Create main window
         self.root = ctk.CTk()
         self.root.title("SRO Auto-Alchemy Bot")
-        self.root.geometry("500x720")
+        self.root.geometry("500x840")
         self.root.resizable(False, False)
         
         # Initialize components
@@ -149,6 +149,16 @@ class MainWindow:
         )
         self._target_stat_entry.grid(row=0, column=1, sticky="w", padx=5, pady=5)
         self._target_stat_entry.insert(0, "100.0")
+
+        self._stat_target_var = ctk.StringVar(value="range")
+        self._range_target_radio = ctk.CTkRadioButton(
+            self._stat_settings_frame, text="Log range", variable=self._stat_target_var,
+            value="range", command=self._on_stat_target_change)
+        self._range_target_radio.grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        self._percent_target_radio = ctk.CTkRadioButton(
+            self._stat_settings_frame, text="Item tooltip %", variable=self._stat_target_var,
+            value="percent", command=self._on_stat_target_change)
+        self._percent_target_radio.grid(row=1, column=1, sticky="w", padx=5, pady=5)
         
         # Timing settings
         self._timing_frame = ctk.CTkFrame(self._settings_frame, fg_color="transparent")
@@ -254,6 +264,22 @@ class MainWindow:
             font=ctk.CTkFont(size=11)
         )
         self._test_label.pack(side="left", padx=10)
+
+        self._percent_frame = ctk.CTkFrame(self._coord_frame, fg_color="transparent")
+        ctk.CTkButton(self._percent_frame, text="Pick Item Hover", width=120,
+                      command=self._pick_item_hover).grid(row=0, column=0, padx=5, pady=3)
+        self._hover_label = ctk.CTkLabel(self._percent_frame, text="Not set",
+                                         font=ctk.CTkFont(size=11))
+        self._hover_label.grid(row=0, column=1, sticky="w", padx=10)
+        ctk.CTkButton(self._percent_frame, text="Select % Area", width=120,
+                      command=self._pick_percent_roi).grid(row=1, column=0, padx=5, pady=3)
+        self._percent_roi_label = ctk.CTkLabel(self._percent_frame, text="Not set",
+                                               font=ctk.CTkFont(size=11))
+        self._percent_roi_label.grid(row=1, column=1, sticky="w", padx=10)
+        ctk.CTkButton(self._percent_frame, text="Test % OCR", width=120,
+                      command=self._test_percent_ocr).grid(row=2, column=0, padx=5, pady=3)
+        ctk.CTkLabel(self._percent_frame, text="Select final (+N%) with a small margin",
+                     font=ctk.CTkFont(size=11)).grid(row=2, column=1, sticky="w", padx=10)
     
     def _create_control_section(self) -> None:
         """Create bot control buttons."""
@@ -416,6 +442,17 @@ class MainWindow:
             self._roi_label.configure(
                 text=f"({config.log_roi_x}, {config.log_roi_y}) {config.log_roi_width}x{config.log_roi_height}"
             )
+
+        if config.item_hover_x > 0 and config.item_hover_y > 0:
+            self._hover_label.configure(text=f"({config.item_hover_x}, {config.item_hover_y})")
+        if config.percent_roi_width > 0 and config.percent_roi_height > 0:
+            self._percent_roi_label.configure(
+                text=f"({config.percent_roi_x}, {config.percent_roi_y}) "
+                     f"{config.percent_roi_width}x{config.percent_roi_height}")
+        self._stat_target_var.set(config.stat_target_type if config.stat_target_type in
+                                  ("range", "percent") else "range")
+        self._target_stat_entry.delete(0, "end")
+        self._target_stat_entry.insert(0, str(config.target_stat_threshold))
         
         # Update timing
         self._animation_delay_entry.delete(0, "end")
@@ -434,6 +471,20 @@ class MainWindow:
         else:
             self._plus_settings_frame.pack_forget()
             self._stat_settings_frame.pack(fill="x", padx=10, pady=10)
+        self._update_percent_controls()
+
+    def _on_stat_target_change(self) -> None:
+        """Switch only the Stat target source; Plus mode is unaffected."""
+        config_manager.update(stat_target_type=self._stat_target_var.get())
+        self._update_percent_controls()
+
+    def _update_percent_controls(self) -> None:
+        self._percent_frame.pack_forget()
+        if self._current_mode == "stat" and self._stat_target_var.get() == "percent":
+            self._target_stat_label.configure(text="Target Percentage (%):")
+            self._percent_frame.pack(fill="x", padx=10, pady=5)
+        else:
+            self._target_stat_label.configure(text="Target Stat Threshold:")
     
     def _pick_fuse_button(self) -> None:
         """Open fuse button picker."""
@@ -452,6 +503,60 @@ class MainWindow:
             self._log_message(f"Log ROI set to: ({x}, {y}) {width}x{height}")
         
         self._selection_helper.pick_log_roi(on_selected)
+
+    def _pick_item_hover(self) -> None:
+        def on_selected(x: int, y: int):
+            config_manager.set_item_hover(x, y)
+            self._hover_label.configure(text=f"({x}, {y})")
+            self._log_message(f"Item hover point set to: ({x}, {y})")
+
+        self._selection_helper.pick_item_hover(on_selected)
+
+    def _capture_manual_tooltip(self, action) -> None:
+        """Give the user time to hover the item before freezing the screen."""
+        self._log_message("Move the mouse onto the item now. Capturing in 8 seconds...")
+        self.root.iconify()
+
+        def capture():
+            try:
+                action()
+            except Exception as exc:
+                self.root.deiconify()
+                self.root.lift()
+                self._log_message(f"ERROR: {exc}")
+
+        self.root.after(8000, capture)
+
+    def _pick_percent_roi(self) -> None:
+        def restore_window():
+            self.root.deiconify()
+            self.root.lift()
+
+        def on_selected(x: int, y: int, width: int, height: int):
+            config_manager.set_percent_roi(x, y, width, height)
+            self._percent_roi_label.configure(text=f"({x}, {y}) {width}x{height}")
+            restore_window()
+            self._log_message("Percentage area selected. Use Test % OCR before starting.")
+
+        self._capture_manual_tooltip(
+            lambda: self._selection_helper.pick_percent_roi(on_selected, restore_window)
+        )
+
+    def _test_percent_ocr(self) -> None:
+        roi = config_manager.get_percent_roi()
+        if roi[2] <= 0 or roi[3] <= 0:
+            self._log_message("ERROR: Select % Area first")
+            return
+        def capture():
+            image = screen_capture.capture_region(*roi)
+            result = ocr_processor.read_tooltip_percent(image)
+            self.root.deiconify()
+            self.root.lift()
+            self._log_message(f"Tooltip OCR: {result.raw_text!r}")
+            self._log_message(f"Percentage: {result.value:g}%" if result.success
+                              else f"ERROR: {result.error}")
+
+        self._capture_manual_tooltip(capture)
     
     def _test_ocr(self) -> None:
         """Test OCR on selected log region."""
@@ -544,14 +649,28 @@ class MainWindow:
             except ValueError:
                 self._log_message("ERROR: Invalid target stat value!")
                 return
+
+            target_type = self._stat_target_var.get()
+            if target_type == "percent":
+                hover_x, hover_y = config_manager.get_item_hover()
+                _, _, roi_width, roi_height = config_manager.get_percent_roi()
+                if not (hover_x > 0 and hover_y > 0 and roi_width > 0 and roi_height > 0):
+                    self._log_message("ERROR: Pick Item Hover and Select % Area first!")
+                    return
+                if not 0 <= target_stat <= 100:
+                    self._log_message("ERROR: Percentage target must be between 0 and 100!")
+                    return
+
+            config_manager.update(target_stat_threshold=target_stat, stat_target_type=target_type)
             
             self._stat_bot.configure(
                 target_threshold=target_stat,
                 animation_delay=animation_delay,
-                click_delay=click_delay
+                click_delay=click_delay,
+                target_type=target_type
             )
             self._stat_bot.start()
-            self._target_label.configure(text=f"Target: {target_stat}")
+            self._target_label.configure(text=f"Target: {target_stat}{'%' if target_type == 'percent' else ''}")
         
         # Update UI
         self._start_btn.configure(state="disabled")

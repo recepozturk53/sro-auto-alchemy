@@ -32,6 +32,13 @@ class BotConfig:
     
     # Stat mode settings
     target_stat_threshold: float = 100.0
+    stat_target_type: str = "range"  # "range" or "percent"
+    item_hover_x: int = 0
+    item_hover_y: int = 0
+    percent_roi_x: int = 0
+    percent_roi_y: int = 0
+    percent_roi_width: int = 0
+    percent_roi_height: int = 0
     
     # Timing settings (milliseconds)
     animation_delay: int = 2500
@@ -145,6 +152,22 @@ class ConfigManager:
             log_roi_width=width,
             log_roi_height=height
         )
+
+    def get_item_hover(self) -> Tuple[int, int]:
+        with self._config_lock:
+            return self._config.item_hover_x, self._config.item_hover_y
+
+    def set_item_hover(self, x: int, y: int) -> None:
+        self.update(item_hover_x=x, item_hover_y=y)
+
+    def get_percent_roi(self) -> Tuple[int, int, int, int]:
+        with self._config_lock:
+            return (self._config.percent_roi_x, self._config.percent_roi_y,
+                    self._config.percent_roi_width, self._config.percent_roi_height)
+
+    def set_percent_roi(self, x: int, y: int, width: int, height: int) -> None:
+        self.update(percent_roi_x=x, percent_roi_y=y,
+                    percent_roi_width=width, percent_roi_height=height)
     
     def is_configured(self) -> bool:
         """Check if essential coordinates are configured."""

@@ -12,7 +12,9 @@ Uygulamanın tek ekranı. Yedi bölümden oluşur ve bot nesnelerinin sahibidir.
 |---|---|---|
 | Mod seçimi | `_create_mode_selector` | `plus` / `stat` radio butonları (`_mode_var`) |
 | Ayarlar | `_create_settings_section` | Hedef plus, hedef stat, `animation_delay`, `click_delay` girdileri |
+| Stat hedef kaynağı | `_on_stat_target_change` | Log aralığı / eşya tooltip yüzdesi seçimi |
 | Koordinat | `_create_coordinate_section` | `Pick Fuse Button`, `Select Log Area`, `Test OCR` butonları + etiketler |
+| Yüzde koordinatları | `_pick_item_hover`, `_pick_percent_roi`, `_test_percent_ocr` | Eşya noktası, tek yüzde alanı ve OCR ön testi |
 | Kontrol | `_create_control_section` | `▶ Start`, `⏸ Pause`, `⏹ Stop` |
 | Durum | `_create_status_section` | Durum metni + `Current` / `Target` / `Iterations` etiketleri |
 | Log | `_create_log_section` | Salt-okunur `CTkTextbox` (yükseklik 120) |
@@ -41,6 +43,15 @@ __init__ → ctk.set_appearance_mode("dark") + set_default_color_theme("dark-blu
 `self._current_mode` (`"plus"` / `"stat"`) hem `_start_bot` hem `_test_ocr` tarafından
 kullanılır; `_on_mode_change` bunu günceller ve hangi ayar çerçevesinin görüneceğini
 belirler (`pack_forget()` / `pack()`).
+
+Stat içindeki `Item tooltip %` seçeneği ayrıca `Pick Item Hover`, `Select % Area`
+ve `Test % OCR` kontrollerini gösterir. Alan seçimi ve OCR testi pencereyi
+simge durumuna indirip kullanıcıya eşyaya **elle** hover yapması için 8 saniye
+verir; sonra görüntü dondurulur. Böylece kurulum adımı sentetik fare girdisine
+bağlı değildir. Kullanıcı yalnızca hedef yüzdesini çevrelemelidir; örneğin
+fiziksel saldırı `(+28%)`, çevresinde birkaç piksel pay bırakarak. Hedef etiketi
+yüzde seçildiğinde `Target Percentage (%)`
+olur; girilen `57` değeri `57%` hedefidir.
 
 ## `_test_ocr` akışı
 

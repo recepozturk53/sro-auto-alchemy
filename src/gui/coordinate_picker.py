@@ -121,7 +121,8 @@ class RegionSelector:
     User clicks and drags to define the region.
     """
     
-    def __init__(self, on_complete: Callable[[Tuple[int, int, int, int]], None] = None):
+    def __init__(self, on_complete: Callable[[Tuple[int, int, int, int]], None] = None,
+                 on_cancel: Optional[Callable[[], None]] = None):
         """
         Initialize region selector.
         
@@ -129,6 +130,7 @@ class RegionSelector:
             on_complete: Callback when region is selected (x, y, width, height)
         """
         self.on_complete = on_complete
+        self.on_cancel = on_cancel
         self._window: Optional[Toplevel] = None
         self._canvas: Optional[Canvas] = None
         self._start_x: int = 0
@@ -136,7 +138,8 @@ class RegionSelector:
         self._current_rect = None
         self._screenshot: Optional[ImageTk.PhotoImage] = None
     
-    def select_region(self) -> None:
+    def select_region(self, prepare_capture: Optional[Callable[[], None]] = None,
+                      label: str = "Log Region") -> None:
         """
         Open a fullscreen overlay to select a rectangular region.
         User clicks and drags to define the area.
@@ -144,6 +147,8 @@ class RegionSelector:
         self._close_existing()
         
         # Take screenshot first
+        if prepare_capture:
+            prepare_capture()
         screenshot = ImageGrab.grab()
         
         # Create fullscreen window
@@ -180,7 +185,7 @@ class RegionSelector:
         # Instructions
         self._canvas.create_text(
             screen_width // 2, 30,
-            text="Click and drag to select the Log Region (Press ESC to cancel)",
+            text=f"Click and drag to select the {label} (Press ESC to cancel)",
             fill='white',
             font=('Arial', 16, 'bold')
         )
@@ -261,6 +266,8 @@ class RegionSelector:
     def _cancel(self) -> None:
         """Cancel selection."""
         self._close_existing()
+        if self.on_cancel:
+            self.on_cancel()
     
     def _close_existing(self) -> None:
         """Close existing window if open."""
@@ -310,6 +317,20 @@ class SelectionHelper:
         
         self._region_selector = RegionSelector(on_complete=on_region_selected)
         self._region_selector.select_region()
+
+    def pick_item_hover(self, callback: Callable[[int, int], None]) -> None:
+        """Pick the screen point over the item whose tooltip is read."""
+        self.pick_fuse_button(callback)
+
+    def pick_percent_roi(self, callback: Callable[[int, int, int, int], None],
+                         on_cancel: Optional[Callable[[], None]] = None) -> None:
+        """Freeze the manually hovered tooltip before showing the overlay."""
+        def on_region_selected(region: Tuple[int, int, int, int]):
+            callback(*region)
+
+        self._region_selector = RegionSelector(on_complete=on_region_selected,
+                                               on_cancel=on_cancel)
+        self._region_selector.select_region(label="Percentage")
     
     def close_all(self) -> None:
         """Close all open pickers."""
