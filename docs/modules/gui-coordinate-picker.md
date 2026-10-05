@@ -20,6 +20,8 @@ seçmesini sağlayan tam ekran saydam overlay.
 ```python
 pick_fuse_button(callback: Callable[[int, int], None])          # (x, y)
 pick_log_roi(callback: Callable[[int, int, int, int], None])    # (x, y, w, h)
+pick_item_hover(callback: Callable[[int, int], None])           # (x, y)
+pick_percent_roi(callback, on_cancel=None)                     # (x, y, w, h)
 close_all()
 ```
 
@@ -53,6 +55,9 @@ kullandığınızı buraya not edin.**
 - Bölge normalleştirme: `x1=min(start,end)`, `x2=max(start,end)`.
 - Seçim sonrası `after(500)` / `after(800)` ile görsel geri bildirim gösterilir,
   sonra `_complete_*` çağrılır.
+- Yüzde ROI seçimi GUI'nin 8 saniyelik elle hover beklemesinden sonra ekran
+  görüntüsünü dondurur. Overlay tooltip'i kapatsa da seçilecek görüntü kalır.
+  ESC iptali `on_cancel` ile ana pencereyi geri açar.
 
 ## Nereye dokunulur
 

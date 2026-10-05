@@ -4,10 +4,16 @@ Clicks upgrade button, reads stat values/percentages from log.
 Stops when current_stat >= target_threshold.
 """
 
+import os
 import time
 from typing import Optional, Dict, Any
-from .bot_base import BotBase, BotState, StopReason
+
+import cv2
+
+from .bot_base import BotBase, BotState, StopReason, DEBUG_DIR
 from .config import config_manager
+from .screen_capture import screen_capture
+from .ocr import ocr_processor
 
 
 class StatModeBot(BotBase):
@@ -27,13 +33,16 @@ class StatModeBot(BotBase):
         self._worst_stat = 0.0
         self._consecutive_failures = 0
         self._max_failures = 10
+        self._stone_failures = 0
+        self._target_type = "range"
     
     def configure(
         self, 
         target_threshold: float,
         animation_delay: int = 1500,
         click_delay: int = 300,
-        max_failures: int = 10
+        max_failures: int = 10,
+        target_type: str = "range"
     ) -> None:
         """
         Configure the Stat mode bot.
@@ -45,6 +54,9 @@ class StatModeBot(BotBase):
             max_failures: Maximum consecutive failures before stopping
         """
         self._target_threshold = target_threshold
+        if target_type not in ("range", "percent"):
+            raise ValueError(f"Unknown stat target type: {target_type}")
+        self._target_type = target_type
         self._animation_delay = animation_delay
         self._click_delay = click_delay
         self._max_failures = max_failures
@@ -62,6 +74,7 @@ class StatModeBot(BotBase):
         self._best_stat = 0.0
         self._worst_stat = float('inf')
         self._consecutive_failures = 0
+        self._stone_failures = 0
         
         # Get configuration
         config = config_manager.config
@@ -74,6 +87,13 @@ class StatModeBot(BotBase):
             )
             self._log("ERROR: Bot not configured!")
             return
+
+        if self._target_type == "percent":
+            hover_x, hover_y = config_manager.get_item_hover()
+            _, _, roi_width, roi_height = config_manager.get_percent_roi()
+            if hover_x <= 0 or hover_y <= 0 or roi_width <= 0 or roi_height <= 0:
+                self._abort("Select the item hover point and percentage area first.")
+                return
         
         self._update_status(
             current_value=0.0,
@@ -151,7 +171,12 @@ class StatModeBot(BotBase):
         # Parse result
         if result.success:
             if result.result_type == "stat":
-                stat_value = self._extract_stat_value(result.value)
+                if self._target_type == "percent":
+                    stat_value = self._read_tooltip_percent()
+                    if stat_value is None:
+                        return False
+                else:
+                    stat_value = self._extract_stat_value(result.value)
                 self._consecutive_failures = 0
                 
                 # Track best/worst
@@ -165,9 +190,12 @@ class StatModeBot(BotBase):
                 self._update_status(
                     current_value=stat_value,
                     failures=0,
-                    message=f"Current: {stat_value:.2f} (Best: {self._best_stat:.2f})"
+                    message=(f"Current: {stat_value:.2f}{'%' if self._target_type == 'percent' else ''} "
+                             f"(Best: {self._best_stat:.2f})")
                 )
-                if 'new_range' in result.value:
+                if self._target_type == "percent":
+                    self._log(f"Tooltip percentage detected: {stat_value:g}%")
+                elif 'new_range' in result.value:
                     low, high = result.value['new_range']
                     self._log(
                         f"Stat detected: new range {low:g} ~ {high:g} "
@@ -181,16 +209,55 @@ class StatModeBot(BotBase):
                     return True
                     
             elif result.result_type == "failed":
-                self._consecutive_failures += 1
+                # An ordinary stone failure does not change the item's stat.
+                # Keep trying until the target is reached or a real error occurs.
+                self._stone_failures += 1
+                self._consecutive_failures = 0
                 self._update_status(
-                    failures=self._consecutive_failures,
-                    message=f"Upgrade failed ({self._consecutive_failures} consecutive)"
+                    failures=self._stone_failures,
+                    message=f"Stone failed ({self._stone_failures} total); stat unchanged"
                 )
-                self._log(f"Upgrade failed ({self._consecutive_failures} consecutive)")
+                self._log(f"Stone failed ({self._stone_failures} total); stat unchanged")
         else:
             self._log(f"Failed to parse result: {result.error}")
         
         return False
+
+    def _read_tooltip_percent(self) -> Optional[float]:
+        """Hover the item and require two agreeing tooltip OCR readings."""
+        hover_x, hover_y = config_manager.get_item_hover()
+        roi = config_manager.get_percent_roi()
+        if not self._set_cursor_pos(hover_x, hover_y):
+            self._abort("Could not move cursor over the item to read its percentage.")
+            return None
+        time.sleep(0.4)
+        if not self._cursor_near(hover_x, hover_y):
+            self._abort("Cursor did not reach the item; percentage cannot be read.")
+            return None
+
+        readings = []
+        for _ in range(2):
+            image = screen_capture.capture_region(*roi)
+            result = ocr_processor.read_tooltip_percent(image)
+            if not result.success:
+                try:
+                    os.makedirs(DEBUG_DIR, exist_ok=True)
+                    debug_path = os.path.join(DEBUG_DIR, "tooltip_percent_failed.png")
+                    cv2.imwrite(debug_path, image)
+                    self._log(f"Tooltip OCR image saved: {debug_path}")
+                except Exception as exc:
+                    self._log(f"Could not save tooltip OCR image: {exc}")
+                self._abort(f"Tooltip percentage could not be read: {result.error} "
+                            f"OCR: {result.raw_text!r}. Check the selected percentage area.")
+                return None
+            readings.append(result.value)
+            if self._stop_event.wait(0.2):
+                return None
+        if readings[0] != readings[1]:
+            self._abort(f"Tooltip percentage changed between OCR readings: {readings}. "
+                        "Check the selected percentage area.")
+            return None
+        return readings[0]
     
     def _extract_stat_value(self, value_data: Dict[str, Any]) -> float:
         """

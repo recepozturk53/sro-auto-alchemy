@@ -281,8 +281,8 @@ class BotBase(ABC):
 
             self._log(
                 f"Click FAILED at ({x}, {y}): the cursor could not be positioned. "
-                "If the game runs as Administrator, restart this tool as "
-                "Administrator too (Windows blocks synthetic input otherwise)."
+                f"Cursor is at {self._cursor_position()}. "
+                "Check cursor clipping, desktop access, and process permissions."
             )
         except Exception as e:
             self._log(f"Click error: {e}")
@@ -296,8 +296,9 @@ class BotBase(ABC):
         log, so the loop is stopped with a clear reason instead.
         """
         self._abort(
-            "Mouse input blocked: SRO_Client runs as Administrator and this "
-            "tool does not. Restart the tool and accept the UAC prompt."
+            "Mouse input blocked: the cursor did not reach the fuse button. "
+            "Run diagnose_input.py to identify whether movement is blocked "
+            "or the target is outside the cursor area."
         )
 
     def _abort(self, reason: str) -> None:
@@ -754,6 +755,27 @@ class BotBase(ABC):
         Returns:
             The trusted result, or None
         """
+        # This result came from _new_line_strip, so it is already new in pixel
+        # space. An explicit alchemy failure contains no value to cross-check;
+        # alternate OCR passes often miss its small text altogether. Accept it
+        # once here, including consecutive identical failure messages.
+        if (result.success and result.result_type == "failed"
+                and ocr_processor.ALCHEMY_FAILED_PATTERN.search(result.raw_text)):
+            return result
+
+        # A stale stat line may be included when the log scrolls. Before a
+        # chained stat can win, check the new strip's alternate readings for
+        # an explicit failure line. Failed fuses have no tooltip to inspect.
+        alternate = []
+        if result.result_type == "stat":
+            for scale, shift, psm in ALT_OCR_PASSES:
+                reading = reread(self._ocr(image, scale, shift, psm))
+                alternate.append(reading)
+                if (reading.success and reading.result_type == "failed"
+                        and ocr_processor.ALCHEMY_FAILED_PATTERN.search(reading.raw_text)):
+                    self._log("Alchemy failure confirmed by alternate log OCR")
+                    return reading
+
         previous = self._previous_result
 
         def same(a: ParseResult, b: ParseResult) -> bool:
@@ -762,8 +784,11 @@ class BotBase(ABC):
 
         def readings():
             yield result
-            for scale, shift, psm in ALT_OCR_PASSES:
-                yield reread(self._ocr(image, scale, shift, psm))
+            if alternate:
+                yield from alternate
+            else:
+                for scale, shift, psm in ALT_OCR_PASSES:
+                    yield reread(self._ocr(image, scale, shift, psm))
 
         seen: List[ParseResult] = []
         chain_known = False
@@ -876,12 +901,8 @@ class BotBase(ABC):
 
     @staticmethod
     def _pick_event(events: List[ParseResult]) -> Optional[ParseResult]:
-        """The fuse result among new events: the newest stat, else a failure."""
-        for wanted in ("stat", "failed"):
-            for event in reversed(events):
-                if event.result_type == wanted:
-                    return event
-        return None
+        """Pick the last event in the newly appeared log lines."""
+        return events[-1] if events else None
 
     def _fuse_and_wait(self, mode: str) -> Optional[ParseResult]:
         """
@@ -926,7 +947,7 @@ class BotBase(ABC):
         if self._previous_result is None:
             # The last result already on screen anchors the chain check
             on_screen = newest_stat(baseline_text) if mode == "stat" else parse(baseline_text)
-            if on_screen.success:
+            if on_screen.success and on_screen.result_type != "failed":
                 self._previous_result = on_screen
 
         # 3. Click the fuse button (exactly once per result)
@@ -966,7 +987,10 @@ class BotBase(ABC):
                     )
                     confirmed = self._confirm_result(strip, result, reread)
                     if confirmed is not None:
-                        self._previous_result = confirmed
+                        # A failed fuse leaves the item value unchanged. Keep
+                        # the last successful stat as the next chain anchor.
+                        if confirmed.result_type != "failed":
+                            self._previous_result = confirmed
                         return confirmed
                     # Re-read on the next poll even if nothing moves
                     last_image = None

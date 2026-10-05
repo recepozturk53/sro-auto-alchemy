@@ -90,6 +90,11 @@ kontrolü zorunlu. Tüketici modülleri **global örneği** import eder, sınıf
 
 ## Değişiklik disiplini
 
+Stat yüzde hedefi tooltip satırının sonundaki **parantezli `(+N%)` bonusunu**
+karşılaştırır; dar ROI yalnızca `+N%` içeriyorsa onu kabul eder. Aralıktaki
+yüzdeler hedef değildir. Log yeni fuse sonucunu doğrulamadan tooltip okunmaz; tooltip
+okunamıyorsa veya iki ardışık okuma farklıysa sonraki fuse yapılmaz.
+
 1. Katman bağımlılığını koru (`gui` → `core` tek yön).
 2. Yeni modül ekle → `docs/module-index.json` + `docs/modules/<ad>.md` +
    `tools/verify_docs.py` yeşil.

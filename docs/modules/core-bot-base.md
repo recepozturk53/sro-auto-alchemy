@@ -105,6 +105,18 @@ def _run_loop(self) -> None:
   Windows yükseltilmemiş sürecin imleç kontrolünü engeller (ADR-0007).
   `_is_elevated()` bunu denetler, `start()` uyarı loglar.
 - `_click_at` imleci doğrulamadan tuşa basmaz (`_cursor_near`); doğrulanamazsa
-  `Click FAILED at (x, y)` loglanır ve **hiçbir yere tıklanmaz**.
+  `Click FAILED at (x, y)` ve mevcut imleç konumu loglanır, **hiçbir yere tıklanmaz**.
+  Bu hata tek başına oyunun yönetici olarak çalıştığını kanıtlamaz; hedefin
+  `GetClipCursor` alanı dışında kalması veya masaüstü erişimi de kontrol edilir.
+- `_confirm_result` yeni piksel şeridindeki açık `alchemy ... fail` sonucunu
+  değer zinciri/çoklu OCR oylaması olmadan kabul eder. Başarısız sonuçta yeni
+  stat değeri yoktur; alternatif OCR geçişleri çoğu kez `None` döndürür.
+  Arka arkaya aynı `failed` metni de yeni şerit olduğu için yeni sonuçtur.
+  Başarısızlık `_previous_result` içindeki son başarılı değeri değiştirmez;
+  sonraki stat sonucunun zinciri eski değere bağlanır.
+- Stat şeridinde birden fazla olay varsa `_pick_event` metindeki **son** olayı
+  seçer. İlk OCR eski bir stat satırını seçmiş olsa bile `_confirm_result`, stat
+  zincirini kabul etmeden önce alternatif OCR okumalarında açık alchemy
+  başarısızlığını arar. Başarısız fuse sonrasında tooltip bulunmayabilir.
 - `pywin32` isteğe bağlıdır: yoksa saf `ctypes` yedeği devreye girer; uygulama
   çökmez.

@@ -156,6 +156,95 @@ class OCRProcessor:
     def tesseract_info(self) -> str:
         """Human-readable Tesseract status (version string or error message)."""
         return self._tesseract_detail
+
+    @staticmethod
+    def parse_tooltip_percent(text: str) -> ParseResult:
+        """Read the +N% bonus, never a percentage from the item range."""
+        # The tiny ')' in the SRO bitmap font is sometimes read as an extra
+        # zero: the real "(+0%)" becomes "(+0%0)". Only tolerate that zero
+        # inside an otherwise complete parenthesized bonus.
+        bonuses = re.findall(
+            r'\(\s*\+\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*%\s*0?\s*\)', text
+        )
+        if not bonuses:
+            # A tight crop may hide the closing ')' while leaving the full
+            # signed percentage visible, e.g. "...47.6(+22%".
+            bonuses = re.findall(
+                r'\(\s*\+\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*%\s*$', text
+            )
+        if len(bonuses) == 1:
+            bonus = float(bonuses[0].replace(',', '.'))
+            if 0 <= bonus <= 100:
+                return ParseResult(True, "percent", value=bonus, raw_text=text)
+        if len(bonuses) > 1:
+            return ParseResult(False, "unknown", raw_text=text,
+                               error="More than one parenthesized bonus was read.")
+
+        # A tightly cropped ROI may exclude the parentheses. Require the plus
+        # sign so a lone 55.1% range endpoint can never become the target.
+        if '(' not in text and ')' not in text:
+            matches = re.findall(r'(?<![\d.])\+\s*(\d{1,3}(?:[.,]\d{1,2})?)\s*%', text)
+            if len(matches) == 1:
+                bonus = float(matches[0].replace(',', '.'))
+                if 0 <= bonus <= 100:
+                    return ParseResult(True, "percent", value=bonus, raw_text=text)
+
+        # In the tiny tooltip font, '+' can look like '4': '(+22%)' becomes
+        # '(422%)'. A 4xx% bonus is impossible here, so strip that leading 4.
+        # Only two-digit bonuses (or 100) are unambiguous; '(40%)' could mean
+        # either 40% or a misread +0%, so it remains rejected.
+        misread_plus = re.findall(r'\(\s*4(100|[1-9]\d)\s*%\s*\)', text)
+        if len(misread_plus) == 1:
+            return ParseResult(True, "percent", value=float(misread_plus[0]),
+                               raw_text=text)
+        return ParseResult(False, "unknown", raw_text=text,
+                           error="Select the final (+N%) bonus or a crop containing only +N%.")
+
+    def read_tooltip_percent(self, image: np.ndarray) -> ParseResult:
+        """OCR a small tooltip crop without applying log scrollbar detection."""
+        with self._ocr_lock:
+            if not self._tesseract_available:
+                self._tesseract_available, self._tesseract_detail = locate_tesseract()
+            if not self._tesseract_available:
+                return ParseResult(False, "unknown", error="Tesseract is unavailable")
+            try:
+                def read(crop: np.ndarray, scale: int) -> ParseResult:
+                    gray = cv2.cvtColor(crop, cv2.COLOR_BGR2GRAY)
+                    _, binary = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
+                    if binary.mean() < 127:
+                        binary = cv2.bitwise_not(binary)
+                    enlarged = cv2.resize(binary, None, fx=scale, fy=scale,
+                                           interpolation=cv2.INTER_NEAREST)
+                    enlarged = cv2.copyMakeBorder(enlarged, 20, 20, 20, 20,
+                                                   cv2.BORDER_CONSTANT, value=255)
+                    text = pytesseract.image_to_string(
+                        enlarged, config='--psm 7 --oem 3 -c tessedit_char_whitelist=0123456789+-.()%'
+                    ).strip()
+                    return self.parse_tooltip_percent(text)
+
+                crops = [image]
+                if image.shape[1] >= 60:
+                    # The bonus sits at the end of the stat line.
+                    crops.append(image[:, image.shape[1] // 2:])
+                valid = []
+                first_error = None
+                for scale in (2, 3):
+                    for crop in crops:
+                        result = read(crop, scale)
+                        if not result.success:
+                            first_error = first_error or result
+                            continue
+                        valid.append(result)
+                if valid:
+                    if len({result.value for result in valid}) == 1:
+                        return valid[0]
+                    return ParseResult(False, "unknown",
+                                       raw_text=" / ".join(r.raw_text for r in valid),
+                                       error="OCR passes disagree on the bonus percentage.")
+                return first_error or ParseResult(False, "unknown",
+                                                  error="No percentage read")
+            except Exception as exc:
+                return ParseResult(False, "unknown", error=str(exc))
     
     @staticmethod
     def crop_scrollbar(image: np.ndarray, threshold: int = 150) -> np.ndarray:

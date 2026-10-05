@@ -22,6 +22,9 @@ Konum: `%APPDATA%\SroAutoAlchemy\config.json` (`_get_config_path`, satır ~72).
 | `target_plus` | `int` | `10` | Hedef + seviyesi |
 | `current_plus` | `int` | `0` | Son okunan + seviyesi |
 | `target_stat_threshold` | `float` | `100.0` | Hedef stat eşiği |
+| `stat_target_type` | `str` | `"range"` | Log aralığı veya eşya tooltip yüzdesi |
+| `item_hover_x` / `item_hover_y` | `int` | `0` | Eşyanın ekran noktası |
+| `percent_roi_x/y/width/height` | `int` | `0` | Tek yüzde içeren tooltip bölgesi |
 | `animation_delay` | `int` | `2500` | Tıklamadan sonra log yoklamaya başlamadan önceki asgari bekleme (ms) |
 | `click_delay` | `int` | `500` | İki tıklama arası bekleme (ms) |
 | `sound_enabled` | `bool` | `True` | Alarm sesi açık mı |
@@ -40,6 +43,7 @@ Konum: `%APPDATA%\SroAutoAlchemy\config.json` (`_get_config_path`, satır ~72).
 | `set_fuse_button(x, y)` | Kısayol |
 | `get_log_roi()` → `(x, y, w, h)` | Kısayol |
 | `set_log_roi(x, y, w, h)` | Kısayol |
+| `get/set_item_hover` ve `get/set_percent_roi` | Yüzde hedefi için ekran seçimi |
 | `is_configured()` | `fuse_x > 0 and fuse_y > 0 and roi_w > 0 and roi_h > 0` |
 
 ## Nereye dokunulur

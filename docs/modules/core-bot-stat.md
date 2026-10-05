@@ -8,14 +8,24 @@ Fuse butonuna tıklar, log'dan **stat / yüzde değerini** okur ve
 `current_stat >= target_threshold` olduğunda başarı alarmıyla durur.
 Ayrıca basılan değerlerin **en iyi / en kötü** değerini izler.
 
+`target_type="range"` mevcut davranıştır: logdaki yeni aralığın üst sınırı
+hedefle karşılaştırılır. `target_type="percent"` seçilirse aynı log sonucu
+beklendikten sonra fare kayıtlı eşyanın üzerine taşınır, kayıtlı tooltip
+bölgesinden yüzde OCR ile iki kez okunur ve hedefle bu yüzde karşılaştırılır.
+Okuma yoksa veya okumalar uyuşmazsa bot sonraki basmayı yapmadan durur.
+OCR hiç ayrıştırılamazsa son ROI görüntüsü `logs/tooltip_percent_failed.png`
+olarak kaydedilir; bu dosya seçili alanı ve fontu doğrudan incelemek içindir.
+
 ## Durum alanları
 
 | Alan | Not |
 |---|---|
 | `_current_stat` | Son okunan değer |
 | `_target_threshold` | Hedef eşik (GUI'den) |
+| `_target_type` | `range` (varsayılan) veya `percent` |
 | `_best_stat` / `_worst_stat` | `_run_loop` başında `_worst_stat = float('inf')` olarak sıfırlanır |
-| `_consecutive_failures` / `_max_failures` | Plus moduyla aynı mantık (`10`) |
+| `_consecutive_failures` / `_max_failures` | Teknik tur hataları için üst sınır (`10`); normal stone `failed` sonucu sayılmaz |
+| `_stone_failures` | Normal stone başarısızlıklarının toplamı; hedef arayışını durdurmaz |
 | `_animation_delay` / `_click_delay` | `configure()` ile gelir |
 
 ## `_extract_stat_value` — kritik nokta
@@ -43,7 +53,7 @@ Plus moduyla **yapısal olarak aynı**; tek fark:
 | Sonuç | Davranış |
 |---|---|
 | `"stat"` | `_extract_stat_value` → `current/best/worst` güncelle, eşiği geçtiyse `True` |
-| `"failed"` | `_consecutive_failures += 1` |
+| `"failed"` | Stat değişmez; `_stone_failures += 1`, yeni fuse turuna geçilir |
 | `success=False` | Hata logla, döngüde kal |
 
 Durum mesajı best değerini de içerir:

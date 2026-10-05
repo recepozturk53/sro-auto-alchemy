@@ -13,6 +13,8 @@ Exit code 0 when the cursor could be positioned, 1 otherwise.
 
 import sys
 import time
+import ctypes
+from ctypes import wintypes
 from pathlib import Path
 
 # Make the src package importable no matter which folder the prompt is in.
@@ -37,6 +39,36 @@ class _DiagnosticBot(BotBase):
         return False
 
 
+def game_is_elevated(bot: _DiagnosticBot):
+    """Read the game's TokenElevation flag without changing its process."""
+    hwnd = bot._find_game_window()
+    if not hwnd:
+        return None
+    user32 = ctypes.windll.user32
+    kernel32 = ctypes.windll.kernel32
+    advapi32 = ctypes.windll.advapi32
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    pid = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), ctypes.byref(pid))
+    process = kernel32.OpenProcess(0x1000, False, pid.value)
+    if not process:
+        return None
+    token = wintypes.HANDLE()
+    try:
+        if not advapi32.OpenProcessToken(process, 0x0008, ctypes.byref(token)):
+            return None
+        elevated = wintypes.DWORD()
+        returned = wintypes.DWORD()
+        if not advapi32.GetTokenInformation(token, 20, ctypes.byref(elevated),
+                                            ctypes.sizeof(elevated), ctypes.byref(returned)):
+            return None
+        return bool(elevated.value)
+    finally:
+        if token.value:
+            kernel32.CloseHandle(token)
+        kernel32.CloseHandle(process)
+
+
 def run(click: bool) -> int:
     """Run the diagnostic. Returns the process exit code."""
     bot = _DiagnosticBot()
@@ -55,13 +87,35 @@ def run(click: bool) -> int:
 
     original = bot._cursor_position()
     print(f"Cursor before : {original}")
+    game_elevated = game_is_elevated(bot)
+    print(f"Game elevated : {game_elevated}")
+
+    clip = wintypes.RECT()
+    if ctypes.windll.user32.GetClipCursor(ctypes.byref(clip)):
+        print(f"Cursor area   : ({clip.left}, {clip.top}) - ({clip.right}, {clip.bottom})")
+        inside = clip.left <= fuse_x < clip.right and clip.top <= fuse_y < clip.bottom
+        print(f"Fuse in area  : {inside}")
+    else:
+        print("Cursor area   : unavailable")
+
+    print("Testing movement before activating the game ...")
+    nx, ny = bot._to_virtual_desktop(fuse_x, fuse_y)
+    pre_move = bot._send_mouse_input(
+        MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, nx, ny
+    )
+    time.sleep(0.05)
+    pre_position = bot._cursor_position()
+    pre_ok = pre_move and bot._cursor_near(fuse_x, fuse_y)
+    print(f"Before game   : {'OK' if pre_ok else 'FAILED'}"
+          f" -> cursor at {pre_position}")
+    if original and pre_position != original:
+        bot._set_cursor_pos(*original)
 
     print("Activating SRO_Client window ...")
     activated = bot._bring_window_to_front("SRO_Client")
     print(f"Window        : {'activated' if activated else 'NOT FOUND (game running?)'}")
     time.sleep(0.3)
 
-    nx, ny = bot._to_virtual_desktop(fuse_x, fuse_y)
     moved = bot._send_mouse_input(
         MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK, nx, ny
     )
@@ -71,15 +125,22 @@ def run(click: bool) -> int:
     print(f"SendInput move: {'OK' if ok else 'FAILED'} -> cursor at {position}")
 
     if not ok:
+        fallback = bot._set_cursor_pos(fuse_x, fuse_y)
+        time.sleep(0.05)
+        fallback_position = bot._cursor_position()
+        print(f"SetCursorPos  : {'OK' if fallback and bot._cursor_near(fuse_x, fuse_y) else 'FAILED'}"
+              f" -> cursor at {fallback_position}")
+
+    if not ok:
         print()
         print("[FAIL] The cursor could not be positioned.")
-        if not bot._is_elevated():
-            print("       This process is NOT elevated. SRO_Client most likely is,")
-            print("       and Windows blocks synthetic input in that case.")
-            print("       -> Close this window and open cmd/PowerShell 'as Administrator'.")
+        if game_elevated is True and not bot._is_elevated() and pre_ok:
+            print("       CONFIRMED: the game is elevated but this Python process is not.")
+            print("       Start PowerShell as Administrator, then run the same")
+            print("       .venv\\Scripts\\python.exe main.py command from that window.")
         else:
-            print("       Elevated, yet the move was ignored. Make sure the game")
-            print("       window is visible and not covered by a UAC prompt.")
+            print("       Check whether the fuse point is inside the cursor area and")
+            print("       whether Windows allowed this process to control the game.")
 
     result = 0 if ok else 1
 

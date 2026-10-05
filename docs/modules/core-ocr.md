@@ -8,6 +8,23 @@ Ekran görüntüsü ROI'sini metne, metni de anlamlı bir `ParseResult`'e çevir
 Bu modül **tek OCR kapısıdır**: botlar doğrudan Tesseract çağırmaz, her zaman
 `ocr_processor.process_log_region(...)` kullanır.
 
+Tooltip yüzdesi ayrı `read_tooltip_percent(image)` yolundan okunur. Bu yol log
+kaydırma çubuğu kırpmasını kullanmaz; küçük görüntüyü eşikleyip büyütür ve tek
+satır olarak OCR yapar. `parse_tooltip_percent(text)` önce tek bir parantezli
+bonus `(+N%)` arar; varsa aynı satırdaki aralık yüzdelerini yok sayıp onu döner.
+Dar ROI parantezleri kesmişse tek bir `+N%` kabul edilir; artı işareti olmayan
+aralık yüzdesi asla hedef olmaz. Ekranda `(+0%)` görüldüğü halde küçük `)`
+karakteri OCR'da `(+0%0)` olabiliyor; yalnızca **parantez içindeki bonusun**
+`%` sonrasındaki tek fazla `0` tolere edilir. Birden çok
+bonus veya başka belirsiz alan okuma hatasıdır;
+sessizce başka yüzde seçilmez.
+Sağ kenarda kapanış parantezi kesilmişse `...(+22%` gibi yalnızca satırın
+**sonunda** biten açık parantezli bonus da `22%` okunur.
+`+` işareti `4` okunursa `(422%)` → `22%` olarak düzeltilir; yalnızca iki
+basamaklı bonuslar (ve `100`) için bu dönüşüm yapılır, `(40%)` belirsiz kalır.
+Tooltip alanı önce x2, sonra x3 nearest büyütmeyle okunur; tam alan başarısızsa
+sağ yarısı da denenir. Geçerli okumalar farklı yüzde verirse sonuç reddedilir.
+
 ## Boru hattı
 
 | Adım | Metot | Ne yapar |
