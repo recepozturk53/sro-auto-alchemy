@@ -46,7 +46,7 @@ nedenidir:
 {'old_range': (538.0, 630.0), 'new_range': (551.0, 646.0),
  'old_avg': 584.0, 'new_avg': 598.5, 'new_max': 646.0, 'improved': True}
 
-# SIMPLE / ARROW desenleri: [12.2->12.4], (297->301]
+# SIMPLE / ARROW / DASH_PERCENT desenleri: [12.2->12.4], (297->301], [10%->3%]
 {'old_value': 297.0, 'new_value': 301.0, 'improved': True}
 ```
 
@@ -71,10 +71,24 @@ sık bozulduğu (`(`→`f`, `]`→`j`/`)`) için isteğe bağlıdır; `->` oku z
 1. `STAT_RANGE_PATTERN` `[(538 ~ 630) -> (551 ~ 646)]`, `[(82.9%~98.6%) -> (81.6%~97.1%)]`
    — yalnızca `_plausible_range` geçen eşleşmeler (her iki tarafta min ≤ max, sınır
    başına değişim 0.5x–2x). Aralık önce gelir: aksi halde sayıları `N->N` sanılır.
-2. `STAT_SIMPLE_PATTERN` `[12.2->12.4]` / `(297->301]`
-3. `STAT_ARROW_PATTERN` (çıplak `N->N`) — yalnızca metinde `chang` geçiyorsa
-4. `FAILED_PATTERN` → `"failed"`
-5. `"unknown"`
+2. `STAT_SIMPLE_PATTERN` `[12.2->12.4]` / `(297->301]` / `[10%->3%]`
+   — birim **parantezin içinde** yazılır, bu yüzden sayı ile ok arasında bir `%`
+   durabilir; `_UNIT` bunu (ve `%`'in `7`/`s` olarak yanlış okunmasını) yutar.
+3. `STAT_DASH_PERCENT_PATTERN` `[1%-10%]` — oku `>`'ünü OCR'a kaybetmiş yüzde
+   sonucu. **Yalnızca iki tarafta da `%` varsa** kabul edilir; aksi halde her
+   aralık okumasını (`549 ~ 644`) yutardı.
+4. `STAT_ARROW_PATTERN` (çıplak `N->N`) — yalnızca metinde `chang` geçiyorsa
+5. `STAT_GRANTED_HINT` + `STAT_GRANTED_VALUE` (sadece `stat_events`)
+   `"[Flame Platinum Ring] attribute has been granted on." / "...Hour 10% Reduce."`
+   — **yeni** bir özellik verildiğinde log'da ok yoktur, tek bir değer vardır.
+   Değer hem `old_value` hem `new_value` olur, `improved=False`, `granted=True`.
+   En sonda aranır ve yalnızca başka desenin almadığı metinde (`free`), böylece
+   gerçek bir `old -> new` asla gölgelenmez.
+6. `FAILED_PATTERN` → `"failed"`
+7. `"unknown"`
+
+Tek değer desenlerinin eşleşmeleri karşılaştırmadan önce konuma göre sıralanır
+(`singles.sort`): "son eşleşme kazanır" kuralı ancak sırayla anlam taşır.
 
 `stat_events(text)`: aynı desenlerle metindeki **tüm** sonuçları sırayla döner (aralık,
 tek değer ve `ALCHEMY_FAILED_PATTERN` — sadece "alchemy/enhancement ... fail"). Bot yeni

@@ -220,6 +220,30 @@
         "Stat results are polymorphic: dicts hold either old_value/new_value/improved or old_range/new_range/old_avg/new_avg/new_max/improved. Ranges must pass _plausible_range; the newest (last) match wins."
       ]
     },
+    "core-ocr-samples": {
+      "files": [
+        "src/core/ocr_samples.py"
+      ],
+      "layer": "L3",
+      "doc": "docs/modules/core-ocr-samples.md",
+      "role": "Self-labelling OCR sample corpus: every log strip the bot reads is written to logs/ocr_samples/ok|error as a PNG named after the parsed value, so misreads can be relabelled by hand and replayed with tools/ocr_replay.py.",
+      "symbols": [
+        "label_for",
+        "save_sample",
+        "SAMPLES_DIR",
+        "OK_DIR",
+        "ERROR_DIR"
+      ],
+      "depends_on": [
+        "core-ocr"
+      ],
+      "rules": [
+        "Collection must never break a running fuse loop: save_sample swallows every exception and returns None.",
+        "The file name IS the label; tools/ocr_replay.py strips the _<YYYYmmdd-HHMMSS-mmm> stamp and compares the rest to what the parser reads. Changing the naming scheme breaks the replay suite.",
+        "Readable strips go to ok/, unreadable ones to error/ with their raw OCR text in a .txt beside them. Moving a file from error/ to ok/ with the right value in its name is how a misread is taught.",
+        "Each directory is capped at MAX_SAMPLES_PER_DIR; the oldest raw capture and its _ocr.png/.txt companions are pruned together."
+      ]
+    },
     "core-config": {
       "files": [
         "src/core/config.py"
@@ -255,17 +279,22 @@
       "summary": "OCR preprocessing, Tesseract settings, regex patterns, parse results",
       "read": [
         "docs/modules/core-ocr.md",
-        "docs/architecture.md"
+        "docs/architecture.md",
+        "docs/modules/core-ocr-samples.md"
       ],
       "edit": [
-        "src/core/ocr.py"
+        "src/core/ocr.py",
+        "src/core/ocr_samples.py",
+        "tools/ocr_replay.py"
       ],
       "verify": [
         "python -m compileall -q src",
-        "GUI Test OCR button with a real log line"
+        "GUI Test OCR button with a real log line",
+        "python tools/ocr_replay.py  # every labelled sample still parses to its label"
       ],
       "rules": [
-        "Keep the parser order intact and justify the priority of any new pattern."
+        "Keep the parser order intact and justify the priority of any new pattern.",
+        "A parser change must be replayed over the collected corpus (tools/ocr_replay.py) before it is considered done."
       ],
       "keywords": [
         "regex",
@@ -280,7 +309,13 @@
         "parse",
         "preprocess",
         "desen",
-        "log satir"
+        "log satir",
+        "sample",
+        "ornek",
+        "replay",
+        "corpus",
+        "misread",
+        "label"
       ]
     },
     "gui": {

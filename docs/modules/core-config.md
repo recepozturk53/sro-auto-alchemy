@@ -27,6 +27,7 @@ Konum: `%APPDATA%\SroAutoAlchemy\config.json` (`_get_config_path`, satır ~72).
 | `sound_enabled` | `bool` | `True` | Alarm sesi açık mı |
 | `ocr_threshold` | `int` | `150` | OpenCV eşik değeri |
 | `tesseract_psm` | `int` | `6` | Tesseract sayfa bölütleme modu |
+| `collect_ocr_samples` | `bool` | `True` | Okunan her log şeridini `logs/ocr_samples/` altına etiketli PNG olarak kaydet (bkz. `core-ocr-samples`) |
 
 ## API
 

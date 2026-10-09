@@ -45,9 +45,19 @@ env/
 *.swo
 *~
 
-# Logs
-logs/
+# Logs ("logs/*" not "logs/": a whole ignored DIRECTORY cannot be dug into,
+# so nothing inside it could be re-included below)
+logs/*
 *.log
+
+# ...but keep the curated OCR sample corpus: labelled captures are the
+# regression suite for the log parser (tools/ocr_replay.py). Raw session
+# noise (the binarized *_ocr.png companions, raw OCR text) stays out.
+!logs/ocr_samples/
+!logs/ocr_samples/**/
+!logs/ocr_samples/**/*.png
+logs/ocr_samples/**/*_ocr.png
+logs/ocr_samples/**/*.txt
 
 # Config (optional - uncomment if you don't want to track user configs)
 # config.json

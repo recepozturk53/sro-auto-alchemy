@@ -173,6 +173,10 @@ class StatModeBot(BotBase):
                         f"Stat detected: new range {low:g} ~ {high:g} "
                         f"(target {self._target_threshold:g} vs {high:g})"
                     )
+                elif result.value.get('granted'):
+                    # A new attribute was put on the item: no old value to
+                    # compare against, the fuse still counts as a result.
+                    self._log(f"Attribute granted: {stat_value:.2f}")
                 else:
                     self._log(f"Stat detected: {stat_value:.2f}")
                 

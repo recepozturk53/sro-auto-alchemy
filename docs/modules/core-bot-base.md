@@ -93,6 +93,15 @@ def _run_loop(self) -> None:
   Buton animasyon boyunca "Cancel" olduğundan sonuç gelmeden asla tekrar
   tıklanmaz. `RESULT_TIMEOUT_MS` (20 sn) dolarsa `success=False` döner; durdurma
   veya engellenen tıklamada `None`.
+- **Varsayılan geçiş şeridi ayrıştıramazsa `_detect_new_result`
+  `ALT_OCR_PASSES`'i de dener.** 1 px font bazen bir rakamı yutar
+  (`[8.2->8.2]` → `[8.2->.2]`); `scale=3/4` onu geri okur. Bu yeniden deneme
+  olmadan satır sessizce düşer ve sağlam bir füzyon zaman aşımına koşar.
+- `_confirm_result(..., strip_is_new=True)`: "önceki sonucun aynısı → eski
+  okuma, reddet" kuralı **yalnızca** tüm ROI okunduğunda geçerlidir. Şerit
+  `_new_line_strip`'ten geliyorsa tekrar gerçektir — iki değer arasında zıplayan
+  bir stat (`8.2↔8.6`) aynı satırı tekrar basar ve eski kural bu durumda
+  bekleyişi zaman aşımına kadar kilitliyordu.
 - `pause()` bir **toggle**'dır; her çağrı durumu ters çevirir.
 - Oyun penceresi **süreç adı + sınıf** ile bulunur (`Macro_Client.exe` /
   `MaxiGuard`), başlıkla değil — başlık girişten sonra değişir (ADR-0008).

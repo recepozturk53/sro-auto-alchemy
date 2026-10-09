@@ -21,6 +21,7 @@ import numpy as np
 from .config import config_manager
 from .screen_capture import screen_capture
 from .ocr import ocr_processor, ParseResult, DEFAULT_OCR_SCALE
+from .ocr_samples import SAMPLES_DIR, save_sample
 
 # Preferred input backend: pywin32 (win32api/win32con) drives the mouse more
 # reliably than raw ctypes on SRO_Client. It is optional: if it is missing we
@@ -735,6 +736,7 @@ class BotBase(ABC):
         image: np.ndarray,
         result: ParseResult,
         reread: Callable[[str], ParseResult],
+        strip_is_new: bool = False,
     ) -> Optional[ParseResult]:
         """
         Decide whether an OCR result can be trusted, re-reading if needed.
@@ -744,12 +746,18 @@ class BotBase(ABC):
         chain is known, MIN_AGREEING_PASSES identical OCR passes are needed;
         when the chain is broken (e.g. another item), the stricter
         MIN_AGREEING_PASSES_CHAIN_BROKEN. A reading identical to the previous
-        result that does not chain is the OLD result read again: rejected.
+        result that does not chain is the OLD result read again: rejected -
+        UNLESS it was read from a strip of verified-new log lines, where a
+        repeat is genuine. A stat that bounces between two values logs the
+        same line again and again ("[8.6 -> 8.2]" after "[8.6 -> 8.2]"), and
+        rejecting those deadlocked the wait until it timed out.
 
         Args:
             image: The capture the result was read from
             result: The candidate result
             reread: Extracts the newest result from another OCR pass' text
+            strip_is_new: Whether `image` holds only lines that appeared
+                after the click (_new_line_strip), making a repeat genuine
 
         Returns:
             The trusted result, or None
@@ -771,7 +779,7 @@ class BotBase(ABC):
             link = self._chains(previous, reading) if previous else None
             if link is True:
                 return reading
-            if previous is not None and same(reading, previous):
+            if previous is not None and same(reading, previous) and not strip_is_new:
                 seen.append(reading)
                 continue  # the old result, not a new one
             chain_known = chain_known or link is not None
@@ -946,6 +954,8 @@ class BotBase(ABC):
         deadline = time.time() + timeout_s
         unparsed = ""
         image, text = baseline_image, baseline_text
+        last_strip: Optional[np.ndarray] = None
+        last_strip_text = ""
         reported: set = set()
         while time.time() < deadline:
             self._ensure_log_area_visible(reported)
@@ -964,20 +974,41 @@ class BotBase(ABC):
                         f"OCR Result: {result.result_type} - "
                         f"{self._one_line(result.raw_text)}"
                     )
-                    confirmed = self._confirm_result(strip, result, reread)
+                    # `strip` here is always the verified-new lines:
+                    # _detect_new_result yields a result only then.
+                    confirmed = self._confirm_result(
+                        strip, result, reread, strip_is_new=True
+                    )
                     if confirmed is not None:
                         self._previous_result = confirmed
+                        self._collect_sample(strip, confirmed, fresh)
                         return confirmed
+                    # The passes disagreed: the strip is readable-looking but
+                    # untrusted, so it is worth relabelling by hand.
+                    if "disagree" not in reported:
+                        reported.add("disagree")
+                        self._collect_sample(strip, None, fresh, "passes-disagree")
                     # Re-read on the next poll even if nothing moves
                     last_image = None
                 elif fresh:
                     unparsed = fresh  # e.g. a chat line; keep waiting
+                    last_strip, last_strip_text = strip, fresh
             if self._stop_event.wait(RESULT_POLL_INTERVAL_S):
                 return None
 
         self._log(f"Log area at timeout: {self._one_line(text)}")
         self._log_capture_diagnostics()
         self._save_debug_images(baseline_image, image)
+        # The new lines that could not be parsed are the sample worth fixing;
+        # with nothing new at all, keep the whole ROI instead.
+        self._collect_sample(
+            last_strip if last_strip is not None else image,
+            None,
+            last_strip_text or text,
+            "timeout",
+        )
+        if config_manager.config.collect_ocr_samples:
+            self._log(f"OCR samples: {os.path.abspath(SAMPLES_DIR)}")
         self._abort(
             f"No readable fuse result in the log within {timeout_s:.0f}s - "
             "stopped instead of clicking again. Check the item and the log area."
@@ -999,6 +1030,12 @@ class BotBase(ABC):
         Only the strip of NEW lines (see _new_line_strip) is read, so results
         already on screen can never be taken for the new one.
 
+        When the default pass cannot parse the strip the ALT_OCR_PASSES are
+        tried too. The default settings sometimes lose a digit to the 1-px
+        font ("[8.2->8.2]" read as "[8.2->.2]") and a bigger upscale reads it
+        back; without this retry such a line is silently dropped and the wait
+        runs into its timeout on a perfectly good fuse.
+
         Returns:
             (candidate or None, function reading the result from another OCR
             pass of the strip, OCR text of the strip, the strip image)
@@ -1006,12 +1043,28 @@ class BotBase(ABC):
         strip = self._new_line_strip(baseline_image, image)
         if strip is None or strip.shape[0] == 0:
             return None, newest_stat, "", image
+
+        read = newest_stat if mode == "stat" else parse
+
+        def candidate(text: str) -> Optional[ParseResult]:
+            if mode == "stat":
+                return self._pick_event(ocr_processor.stat_events(text))
+            result = parse(text)
+            return result if result.success else None
+
         text = self._ocr(strip)
-        if mode == "stat":
-            return (self._pick_event(ocr_processor.stat_events(text)),
-                    newest_stat, text, strip)
-        result = parse(text)
-        return (result if result.success else None), parse, text, strip
+        found = candidate(text)
+        if found is None:
+            for scale, shift, psm in ALT_OCR_PASSES:
+                alt_text = self._ocr(strip, scale, shift, psm)
+                found = candidate(alt_text)
+                if found is not None:
+                    self._log(
+                        f"Read with fallback OCR pass (scale={scale}, "
+                        f"threshold{shift:+d}, psm={psm})"
+                    )
+                    return found, read, alt_text, strip
+        return found, read, text, strip
 
     @staticmethod
     def _one_line(text: str, limit: int = 160) -> str:
@@ -1020,6 +1073,27 @@ class BotBase(ABC):
         if not flat:
             return "<empty>"
         return flat[:limit] + "..." if len(flat) > limit else flat
+
+    def _collect_sample(
+        self,
+        image: np.ndarray,
+        result: Optional[ParseResult],
+        raw_text: str = "",
+        note: str = "",
+    ) -> None:
+        """
+        Save the strip that was just read as a labelled OCR sample.
+
+        Readable strips are named after the value, unreadable ones land in
+        logs/ocr_samples/error/ to be relabelled by hand; see ocr_samples.
+        Only the first unreadable strip of a wait is worth keeping, so
+        callers pass a note and the per-iteration flag stops the flood.
+        """
+        if not config_manager.config.collect_ocr_samples:
+            return
+        path = save_sample(image, result, raw_text, note)
+        if path is not None and (result is None or not result.success):
+            self._log(f"Unreadable sample saved: {os.path.basename(path)}")
 
     def _save_debug_images(self, before: np.ndarray, after: np.ndarray) -> None:
         """

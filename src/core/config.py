@@ -44,6 +44,10 @@ class BotConfig:
     ocr_threshold: int = 150  # OpenCV threshold value
     tesseract_psm: int = 6    # Tesseract page segmentation mode
 
+    # Save every log strip the bot reads to logs/ocr_samples/ as a labelled
+    # PNG, so misreads can be collected and replayed (tools/ocr_replay.py)
+    collect_ocr_samples: bool = True
+
 
 class ConfigManager:
     """

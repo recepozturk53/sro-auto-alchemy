@@ -124,10 +124,30 @@ class OCRProcessor:
     STAT_RANGE_PATTERN = re.compile(
         _RANGE + r'\s*[)\]}jJ|]?' + _ARROW + r'[(\[{fF]?\s*' + _RANGE
     )
-    STAT_SIMPLE_PATTERN = re.compile(r'[\[(]\s*' + _NUM + _ARROW + _NUM)
+    # Single value, optionally a percentage: "[10% -> 3%]", "(297->301]".
+    # The log writes the unit INSIDE the brackets, so "%" (misread as "7 % s")
+    # may sit between the number and the arrow.
+    _UNIT = r'\s*[%7s]?\s*'
+    STAT_SIMPLE_PATTERN = re.compile(
+        r'[\[({]\s*' + _NUM + _UNIT + _ARROW + _NUM
+    )
     # Bare "N->N" only counts when the text looks like a stat change message
-    STAT_ARROW_PATTERN = re.compile(_NUM + _ARROW + _NUM)
+    STAT_ARROW_PATTERN = re.compile(_NUM + _UNIT + _ARROW + _NUM)
+    # A percent stat whose arrow lost its ">" to OCR ("[1%-10%]" for
+    # "[1%->10%]"). Only accepted when BOTH sides carry a "%", otherwise it
+    # would swallow every range reading ("549 ~ 644").
+    STAT_DASH_PERCENT_PATTERN = re.compile(
+        r'[\[({]\s*' + _NUM + r'\s*%\s*-+\s*' + _NUM + r'\s*%'
+    )
     STAT_MESSAGE_HINT = re.compile(r'chang', re.IGNORECASE)
+    # A fuse that puts a NEW attribute on the item logs no "old -> new" pair,
+    # only the value it granted, over two lines:
+    #   "[Flame Platinum Ring] attribute has been granted on."
+    #   "Electric shock Hour 10% Reduce."
+    # Without this the wait times out on a perfectly good fuse. The value is
+    # taken as both old and new: nothing improved, but the result is readable.
+    STAT_GRANTED_HINT = re.compile(r'grant(?:ed)?\s*on', re.IGNORECASE)
+    STAT_GRANTED_VALUE = re.compile(_NUM + r'\s*%')
     # "The alchemy enhancement has failed." - tied to alchemy wording so a chat
     # line containing "fail" is not mistaken for a fuse result
     ALCHEMY_FAILED_PATTERN = re.compile(
@@ -385,8 +405,10 @@ class OCRProcessor:
                 return all(span[1] <= a or span[0] >= b for a, b in taken)
 
             singles = list(self.STAT_SIMPLE_PATTERN.finditer(text))
+            singles += list(self.STAT_DASH_PERCENT_PATTERN.finditer(text))
             if self.STAT_MESSAGE_HINT.search(text):
                 singles += list(self.STAT_ARROW_PATTERN.finditer(text))
+            singles.sort(key=lambda m: m.start())
             for match in singles:
                 if not free(match.span()):
                     continue
@@ -401,6 +423,27 @@ class OCRProcessor:
                         'improved': new_value > old_value
                     },
                     raw_text=match.group(0)
+                )))
+
+            # "attribute has been granted on" + the value, on the next line.
+            # Searched last and only over text no arrow pattern claimed, so a
+            # real "old -> new" is never pre-empted by it.
+            for hint in self.STAT_GRANTED_HINT.finditer(text):
+                value = self.STAT_GRANTED_VALUE.search(text, hint.end())
+                if value is None or not free(value.span()):
+                    continue
+                taken.append(value.span())
+                granted = float(value.group(1))
+                found.append((hint.start(), ParseResult(
+                    success=True,
+                    result_type="stat",
+                    value={
+                        'old_value': granted,
+                        'new_value': granted,
+                        'improved': False,
+                        'granted': True,
+                    },
+                    raw_text=text[hint.start():value.end()],
                 )))
 
             for match in self.ALCHEMY_FAILED_PATTERN.finditer(text):
@@ -454,9 +497,11 @@ class OCRProcessor:
                 )
 
             singles = list(self.STAT_SIMPLE_PATTERN.finditer(text))
+            singles += list(self.STAT_DASH_PERCENT_PATTERN.finditer(text))
             if not singles and self.STAT_MESSAGE_HINT.search(text):
                 singles = list(self.STAT_ARROW_PATTERN.finditer(text))
             if singles:
+                singles.sort(key=lambda m: m.start())
                 old_value, new_value = (float(v) for v in singles[-1].groups())
                 return ParseResult(
                     success=True,
